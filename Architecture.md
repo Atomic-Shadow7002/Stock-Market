@@ -189,13 +189,15 @@ volumes:
 -- V1__create_users.sql
 CREATE TABLE users (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    phone       VARCHAR(15)  NOT NULL UNIQUE,              -- required, E.164 e.g. +919876543210
+    first_name  VARCHAR(100) NOT NULL,
+    last_name   VARCHAR(100) NOT NULL,
+    phone       VARCHAR(20)  NOT NULL UNIQUE,              -- required, E.164 e.g. +919876543210
     email       VARCHAR(255) UNIQUE,                       -- optional
     password    VARCHAR(255) NOT NULL,
-    name        VARCHAR(100) NOT NULL,
     role        VARCHAR(20)  NOT NULL DEFAULT 'USER',
-    created_at  TIMESTAMP    NOT NULL DEFAULT now(),
-    updated_at  TIMESTAMP    NOT NULL DEFAULT now()
+    enabled     BOOLEAN      NOT NULL DEFAULT true,         -- account suspension support
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
 -- V2__create_refresh_tokens.sql
@@ -203,8 +205,8 @@ CREATE TABLE refresh_tokens (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id     UUID         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     token       TEXT         NOT NULL UNIQUE,
-    expires_at  TIMESTAMP    NOT NULL,
-    created_at  TIMESTAMP    NOT NULL DEFAULT now()
+    expires_at  TIMESTAMPTZ  NOT NULL,
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
 -- V3__create_watchlists.sql
@@ -212,7 +214,7 @@ CREATE TABLE watchlists (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id     UUID         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name        VARCHAR(100) NOT NULL,
-    created_at  TIMESTAMP    NOT NULL DEFAULT now()
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
 CREATE TABLE watchlist_items (
@@ -220,7 +222,7 @@ CREATE TABLE watchlist_items (
     watchlist_id UUID         NOT NULL REFERENCES watchlists(id) ON DELETE CASCADE,
     symbol       VARCHAR(20)  NOT NULL,
     exchange     VARCHAR(10)  NOT NULL,
-    added_at     TIMESTAMP    NOT NULL DEFAULT now(),
+    added_at     TIMESTAMPTZ  NOT NULL DEFAULT now(),
     UNIQUE (watchlist_id, symbol)
 );
 ```
@@ -242,14 +244,15 @@ CREATE TABLE watchlist_items (
 
 ```json
 {
+  "firstName": "Abhi",
+  "lastName": "Sharma",
   "phone": "+919876543210",
   "password": "secret123",
-  "name": "Abhi",
   "email": "abhi@example.com"
 }
 ```
 
-> `phone`, `password`, `name` are required. `email` is optional.
+> `firstName`, `lastName`, `phone`, `password` are required. `email` is optional.
 
 #### `POST /auth/login` — Request Body
 
@@ -265,11 +268,11 @@ CREATE TABLE watchlist_items (
 
 ### User
 
-| Method | Endpoint             | Auth | Description         |
-| ------ | -------------------- | ---- | ------------------- |
-| GET    | `/users/me`          | Yes  | Get own profile     |
-| PUT    | `/users/me`          | Yes  | Update name / email |
-| PUT    | `/users/me/password` | Yes  | Change password     |
+| Method | Endpoint             | Auth | Description            |
+| ------ | -------------------- | ---- | ---------------------- |
+| GET    | `/users/me`          | Yes  | Get own profile        |
+| PUT    | `/users/me`          | Yes  | Update name(s) / email |
+| PUT    | `/users/me/password` | Yes  | Change password        |
 
 ### Market
 
@@ -294,7 +297,7 @@ CREATE TABLE watchlist_items (
 
 ```
 POST /auth/register
-  body: { phone* , password*, name*, email? }
+  body: { firstName*, lastName*, phone*, password*, email? }
         │
         ▼
   validate: phone present + E.164 format
@@ -369,16 +372,20 @@ POST /auth/logout
 
 ```java
 public record RegisterRequest(
-    @NotBlank @Pattern(regexp = "^\\+[1-9]\\d{7,14}$", message = "Phone must be E.164 format")
+    @NotBlank(message = "First name is required")
+    String firstName,       // required
+
+    @NotBlank(message = "Last name is required")
+    String lastName,        // required
+
+    @NotBlank(message = "Phone is required")
+    @Pattern(regexp = "^\\+[1-9]\\d{7,14}$", message = "Phone must be E.164 format")
     String phone,           // required
 
-    @NotBlank
+    @NotBlank(message = "Password is required")
     String password,        // required
 
-    @NotBlank
-    String name,            // required
-
-    @Email
+    @Email(message = "Email must be valid")
     String email            // optional
 ) {}
 ```
@@ -409,11 +416,13 @@ public record AuthResponse(
 ```java
 public record UserResponse(
     UUID id,
+    String firstName,
+    String lastName,
     String phone,
     String email,           // nullable
-    String name,
     String role,
-    LocalDateTime createdAt
+    boolean enabled,
+    OffsetDateTime createdAt
 ) {}
 ```
 
@@ -422,18 +431,42 @@ public record UserResponse(
 ## User Entity — Key Fields
 
 ```java
-@Column(nullable = false, unique = true)
+@Id
+@GeneratedValue(strategy = GenerationType.UUID)
+private UUID id;
+
+@Column(name = "first_name", nullable = false, length = 100)
+private String firstName;
+
+@Column(name = "last_name", nullable = false, length = 100)
+private String lastName;
+
+@Column(nullable = false, unique = true, length = 20)
 private String phone;       // E.164, always present
 
-@Column(unique = true)
+@Column(unique = true, length = 255)
 private String email;       // nullable, set at registration or later via PUT /users/me
 
-@Column(nullable = false)
+@Column(nullable = false, length = 255)
 private String password;    // BCrypt hashed
 
+@Enumerated(EnumType.STRING)
+@Column(nullable = false, length = 20)
+@Builder.Default
+private Role role = Role.USER;
+
 @Column(nullable = false)
-private String name;
+@Builder.Default
+private Boolean enabled = true;   // future account suspension support
+
+@Column(name = "created_at", nullable = false, updatable = false)
+private OffsetDateTime createdAt;
+
+@Column(name = "updated_at", nullable = false)
+private OffsetDateTime updatedAt;
 ```
+
+> `getUsername()` (from `UserDetails`) returns `id.toString()`, not `phone` or `email` — keeps Spring Security's internal identity decoupled from the actual login fields.
 
 ---
 
@@ -444,18 +477,19 @@ private String name;
 - [x] Folder structure
 - [x] `application.yml`
 - [x] `docker-compose.yml`
-- [] `ApiResponse<T>`
-- [] `GlobalExceptionHandler`
-- [] Flyway + `V1__create_users.sql` (phone required, email optional)
+- [x] `ApiResponse<T>`
+- [x] `GlobalExceptionHandler`
+- [x] Flyway + `V1__create_users.sql` (firstName, lastName, phone required, email optional, enabled)
 
 ### Phase 2 — Auth
 
-- [ ] `User` entity (`phone` NOT NULL, `email` nullable), `Role` enum, `UserRepository`
-- [ ] `PasswordEncoder` bean (BCrypt)
+- [x] `Role` enum
+- [x] `User` entity (firstName, lastName, phone NOT NULL, email nullable, enabled), `UserRepository`
+- [x] `PasswordEncoder` bean (BCrypt)
 - [ ] `JwtService` — generate + validate tokens (sub = userId)
 - [ ] `JwtFilter` — validate Bearer token on every request
 - [ ] `SecurityConfig` — permit `/auth/**`, lock everything else
-- [ ] `RegisterRequest` — phone + password + name required, email optional
+- [ ] `RegisterRequest` — firstName + lastName + phone + password required, email optional
 - [ ] `LoginRequest` — phone or email + password
 - [ ] `AuthController` — register, login, refresh, logout
 - [ ] `RefreshToken` entity + `V2__create_refresh_tokens.sql`
@@ -463,7 +497,7 @@ private String name;
 ### Phase 3 — User Profile
 
 - [ ] `GET /users/me`
-- [ ] `PUT /users/me` (update name and/or add/change email)
+- [ ] `PUT /users/me` (update firstName/lastName and/or add/change email)
 - [ ] `PUT /users/me/password`
 
 ### Phase 4 — Market Data
@@ -481,6 +515,8 @@ private String name;
 ### Later (not now)
 
 - Phone + OTP login (Twilio / AWS SNS) — schema already ready
+- Email/phone verification flags (`emailVerified`, `phoneVerified`)
+- Admin endpoint to toggle `enabled` (account suspension)
 - Swagger / OpenAPI
 - WebSocket
 - Redis
