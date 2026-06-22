@@ -485,9 +485,9 @@ private OffsetDateTime updatedAt;
 ### Phase 2 — Auth
 
 - [x] `Role` enum
-- [ ] `User` entity (firstName, lastName, phone NOT NULL, email nullable, enabled), `UserRepository`
-- [ ] `PasswordEncoder` bean (BCrypt)
-- [ ] `JwtService` — generate + validate tokens (sub = userId)
+- [x] `User` entity (firstName, lastName, phone NOT NULL, email nullable, enabled), `UserRepository`
+- [x] `PasswordEncoder` bean (BCrypt)
+- [x] `JwtService` — generate + validate tokens (sub = userId)
 - [ ] `JwtFilter` — validate Bearer token on every request
 - [ ] `SecurityConfig` — permit `/auth/**`, lock everything else
 - [ ] `RegisterRequest` — firstName + lastName + phone + password required, email optional

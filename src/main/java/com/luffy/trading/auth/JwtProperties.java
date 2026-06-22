@@ -6,13 +6,17 @@ import org.springframework.stereotype.Component;
 import lombok.Getter;
 import lombok.Setter;
 
-@Getter
-@Setter
 @Component
 @ConfigurationProperties(prefix = "jwt")
+@Getter
+@Setter
 public class JwtProperties {
 
     private String secret;
-    private long accessTokenExpiry;   // seconds
-    private long refreshTokenExpiry;  // seconds
+
+    /** Access token TTL in seconds. Default: 900 (15 min) */
+    private long accessTokenExpiry;
+
+    /** Refresh token TTL in seconds. Default: 604800 (7 days) */
+    private long refreshTokenExpiry;
 }
