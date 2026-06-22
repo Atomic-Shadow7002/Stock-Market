@@ -65,11 +65,11 @@ public class JwtService {
 
     private Claims parseClaims(String token) {
         try {
-            return Jwts.parserBuilder()
-                    .setSigningKey(signingKey)
-                    .build()
-                    .parseClaimsJws(token)
-                    .getBody();
+            return Jwts.parser()
+        .verifyWith((javax.crypto.SecretKey) signingKey)
+        .build()
+        .parseSignedClaims(token)
+        .getPayload();
         } catch (ExpiredJwtException e) {
             throw new JwtValidationException("Token has expired", e);
         } catch (Exception e) {
