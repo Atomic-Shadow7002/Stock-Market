@@ -3,14 +3,33 @@ spring:
     name: trading
 
   datasource:
-    url: jdbc:postgresql://localhost:5432/trading
-    username: postgres
-    password: postgres
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/trading}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
 
   jpa:
     hibernate:
       ddl-auto: validate
     open-in-view: false
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
 
   flyway:
     enabled: true
+    locations: classpath:db/migration
+
+server:
+  port: 8080
+
+jwt:
+  secret: ${JWT_SECRET}
+  access-token-expiry: 900
+  refresh-token-expiry: 604800
+
+logging:
+  level:
+    com.luffy.trading: DEBUG
+    org.springframework.security: DEBUG

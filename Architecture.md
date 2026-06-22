@@ -53,6 +53,7 @@ trading/
     │   │   │   └── JacksonConfig.java
     │   │   │
     │   │   ├── exception/
+    │   │   │   ├── JwtValidationException.java
     │   │   │   ├── GlobalExceptionHandler.java
     │   │   │   ├── ResourceNotFoundException.java
     │   │   │   └── DuplicateResourceException.java
@@ -484,8 +485,8 @@ private OffsetDateTime updatedAt;
 ### Phase 2 — Auth
 
 - [x] `Role` enum
-- [x] `User` entity (firstName, lastName, phone NOT NULL, email nullable, enabled), `UserRepository`
-- [x] `PasswordEncoder` bean (BCrypt)
+- [ ] `User` entity (firstName, lastName, phone NOT NULL, email nullable, enabled), `UserRepository`
+- [ ] `PasswordEncoder` bean (BCrypt)
 - [ ] `JwtService` — generate + validate tokens (sub = userId)
 - [ ] `JwtFilter` — validate Bearer token on every request
 - [ ] `SecurityConfig` — permit `/auth/**`, lock everything else
