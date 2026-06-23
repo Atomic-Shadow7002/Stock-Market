@@ -68,6 +68,14 @@ public class User implements UserDetails {
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
+    @Column(name = "phone_verified", nullable = false)
+    @Builder.Default
+    private boolean phoneVerified = false;
+
+    @Column(name = "email_verified", nullable = false)
+    @Builder.Default
+    private boolean emailVerified = false;
+
     @PrePersist
     protected void onCreate() {
         createdAt = OffsetDateTime.now();

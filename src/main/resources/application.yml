@@ -33,3 +33,7 @@ logging:
   level:
     com.luffy.trading: DEBUG
     org.springframework.security: DEBUG
+
+otp:
+  sender: logging # dev default; switch to "twilio" once implemented
+  cleanup-interval-ms: 600000 # 10 min between expired-OTP sweeps
