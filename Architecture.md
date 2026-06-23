@@ -1,6 +1,6 @@
 # Stock Market Backend
 
-> Java 21 · Spring Boot 3 · PostgreSQL 17 · Flyway · Docker · JWT
+> Java 21 · Spring Boot 3 · PostgreSQL 17 · Flyway · Docker · JWT · Bucket4j
 
 ---
 
@@ -13,6 +13,7 @@
 | Security         | Spring Security + JWT   |
 | Database         | PostgreSQL 17           |
 | Migrations       | Flyway                  |
+| Rate Limiting    | Bucket4j (in-memory)    |
 | Containerization | Docker & Docker Compose |
 | Build Tool       | Maven                   |
 
@@ -20,14 +21,20 @@
 
 ## Auth Strategy
 
-| Method           | Status    | Identifier       |
-| ---------------- | --------- | ---------------- |
-| Phone + Password | ✅ MVP    | Phone (required) |
-| Email + Password | ✅ MVP    | Email (optional) |
-| Phone + OTP      | 🔜 Future | —                |
+| Method                 | Status    | Identifier       |
+| ---------------------- | --------- | ---------------- |
+| Phone + Password       | ✅ MVP    | Phone (required) |
+| Email + Password       | ✅ MVP    | Email (optional) |
+| Phone OTP verification | ✅ MVP    | Phone (required) |
+| Email OTP verification | ✅ MVP    | Email (optional) |
+| Phone + OTP **login**  | 🔜 Future | —                |
 
 > **Phone is always required.** Email is optional and can be added later by the user.
 > Login can be done via phone or email, but registration always requires phone.
+> **New:** registration now also kicks off phone verification via OTP, and login is
+> blocked until the phone is verified. OTP **login** (replacing password with a code)
+> is still future work — what's shipped now is OTP **verification** of an
+> already-registered phone/email.
 
 ---
 
@@ -45,25 +52,33 @@ trading/
     ├── main/
     │   ├── java/com/luffy/trading/
     │   │   │
-    │   │   ├── TradingApplication.java
+    │   │   ├── TradingApplication.java          ← @EnableScheduling added (OTP cleanup)
     │   │   │
     │   │   ├── config/
     │   │   │   ├── SecurityConfig.java
     │   │   │   ├── CorsConfig.java
-    │   │   │   └── JacksonConfig.java
+    │   │   │   ├── JacksonConfig.java
+    │   │   │   └── RateLimitService.java         ← NEW: Bucket4j buckets
     │   │   │
     │   │   ├── exception/
     │   │   │   ├── JwtValidationException.java
-    │   │   │   ├── GlobalExceptionHandler.java
+    │   │   │   ├── GlobalExceptionHandler.java     ← updated: OTP/rate-limit handlers
     │   │   │   ├── ResourceNotFoundException.java
-    │   │   │   └── DuplicateResourceException.java
+    │   │   │   ├── DuplicateResourceException.java
+    │   │   │   ├── InvalidOtpException.java        ← NEW
+    │   │   │   ├── OtpExpiredException.java         ← NEW
+    │   │   │   ├── TooManyOtpAttemptsException.java ← NEW
+    │   │   │   └── RateLimitExceededException.java  ← NEW
     │   │   │
     │   │   ├── response/
     │   │   │   └── ApiResponse.java
     │   │   │
+    │   │   ├── util/
+    │   │   │   └── SecurityUtils.java              ← NEW: current userId from JWT context
+    │   │   │
     │   │   ├── auth/
-    │   │   │   ├── AuthController.java
-    │   │   │   ├── AuthService.java
+    │   │   │   ├── AuthController.java              ← updated: IP rate limiting
+    │   │   │   ├── AuthService.java                 ← updated: triggers OTP, blocks unverified login
     │   │   │   ├── AuthRepository.java
     │   │   │   ├── JwtService.java
     │   │   │   ├── JwtFilter.java
@@ -74,8 +89,20 @@ trading/
     │   │   │   ├── RegisterRequest.java
     │   │   │   └── AuthResponse.java
     │   │   │
+    │   │   ├── otp/                                ← NEW PACKAGE
+    │   │   │   ├── OtpType.java                     enum PHONE / EMAIL
+    │   │   │   ├── OtpVerification.java              entity — BCrypt hash only, never plaintext
+    │   │   │   ├── OtpRepository.java
+    │   │   │   ├── OtpSender.java                    abstraction — Twilio/SES plug in later
+    │   │   │   ├── LoggingOtpSender.java             dev-only impl, logs the code
+    │   │   │   ├── OtpService.java                  generate / send / verify business logic
+    │   │   │   ├── SendOtpRequest.java
+    │   │   │   ├── VerifyOtpRequest.java
+    │   │   │   ├── OtpController.java                POST /otp/send, POST /otp/verify
+    │   │   │   └── OtpCleanupScheduler.java          purges expired OTPs every 10 min
+    │   │   │
     │   │   ├── user/
-    │   │   │   ├── User.java
+    │   │   │   ├── User.java                         ← updated: phoneVerified, emailVerified
     │   │   │   ├── Role.java
     │   │   │   ├── UserRepository.java
     │   │   │   ├── UserController.java
@@ -102,17 +129,21 @@ trading/
     │   │       └── WatchlistResponse.java
     │   │
     │   └── resources/
-    │       ├── application.yml
+    │       ├── application.yml                       ← updated: otp.* properties
     │       └── db/
     │           └── migration/
     │               ├── V1__create_users.sql
     │               ├── V2__create_refresh_tokens.sql
-    │               └── V3__create_watchlists.sql
+    │               ├── V3__add_verification_flags_to_users.sql  ← NEW
+    │               ├── V4__create_otp_verifications.sql          ← NEW
+    │               └── V5__create_watchlists.sql                 ← not built yet (Phase 5 below), reserved next number
     │
     └── test/
         └── java/com/luffy/trading/
             ├── auth/
             │   └── AuthServiceTest.java
+            ├── otp/                                  ← NEW
+            │   └── OtpServiceTest.java
             ├── user/
             │   └── UserServiceTest.java
             └── watchlist/
@@ -154,6 +185,15 @@ jwt:
   access-token-expiry: 900
   refresh-token-expiry: 604800
 
+# NEW
+otp:
+  sender:
+    logging # dev default — prints OTP to logs. Switch to
+    # "twilio" (or another provider id) once a real
+    # OtpSender implementation exists. NEVER use
+    # "logging" in production.
+  cleanup-interval-ms: 600000 # how often OtpCleanupScheduler purges expired rows
+
 logging:
   level:
     com.luffy.trading: DEBUG
@@ -185,6 +225,19 @@ volumes:
 
 ---
 
+## pom.xml — added dependency
+
+```xml
+<!-- Rate limiting (Java 17+ build) -->
+<dependency>
+    <groupId>com.bucket4j</groupId>
+    <artifactId>bucket4j_jdk17-core</artifactId>
+    <version>8.19.0</version>
+</dependency>
+```
+
+---
+
 ## Database Migrations
 
 ```sql
@@ -211,22 +264,28 @@ CREATE TABLE refresh_tokens (
     created_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
--- V3__create_watchlists.sql
-CREATE TABLE watchlists (
+-- V3__add_verification_flags_to_users.sql   ← NEW
+ALTER TABLE users
+    ADD COLUMN phone_verified BOOLEAN NOT NULL DEFAULT false,
+    ADD COLUMN email_verified BOOLEAN NOT NULL DEFAULT false;
+
+-- V4__create_otp_verifications.sql          ← NEW
+CREATE TABLE otp_verifications (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id     UUID         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    name        VARCHAR(100) NOT NULL,
-    created_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+    type        VARCHAR(10)  NOT NULL CHECK (type IN ('PHONE', 'EMAIL')),
+    code_hash   VARCHAR(255) NOT NULL,           -- BCrypt hash only, plaintext never stored
+    expires_at  TIMESTAMPTZ  NOT NULL,
+    attempts    INT          NOT NULL DEFAULT 0,
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    CONSTRAINT uq_otp_user_type UNIQUE (user_id, type)  -- one active OTP per user per type
 );
 
-CREATE TABLE watchlist_items (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    watchlist_id UUID         NOT NULL REFERENCES watchlists(id) ON DELETE CASCADE,
-    symbol       VARCHAR(20)  NOT NULL,
-    exchange     VARCHAR(10)  NOT NULL,
-    added_at     TIMESTAMPTZ  NOT NULL DEFAULT now(),
-    UNIQUE (watchlist_id, symbol)
-);
+CREATE INDEX idx_otp_expires_at ON otp_verifications (expires_at);
+
+-- V5__create_watchlists.sql                  ← NOT YET BUILT (Phase 5) — numbered here as a
+-- placeholder so whoever implements watchlists knows which version is next in line.
+-- Until it exists, V4 is genuinely the latest applied migration.
 ```
 
 ---
@@ -235,12 +294,12 @@ CREATE TABLE watchlist_items (
 
 ### Auth
 
-| Method | Endpoint         | Auth | Description                     |
-| ------ | ---------------- | ---- | ------------------------------- |
-| POST   | `/auth/register` | No   | Create account (phone required) |
-| POST   | `/auth/login`    | No   | Login via phone or email        |
-| POST   | `/auth/refresh`  | No   | Refresh access token            |
-| POST   | `/auth/logout`   | Yes  | Revoke refresh token            |
+| Method | Endpoint         | Auth | Rate Limit       | Description                                                |
+| ------ | ---------------- | ---- | ---------------- | ---------------------------------------------------------- |
+| POST   | `/auth/register` | No   | 5 / hour / IP    | Create account (phone required), fires phone OTP           |
+| POST   | `/auth/login`    | No   | 10 / 15 min / IP | Login via phone or email — **blocked if phone unverified** |
+| POST   | `/auth/refresh`  | No   | —                | Refresh access token                                       |
+| POST   | `/auth/logout`   | Yes  | —                | Revoke refresh token                                       |
 
 #### `POST /auth/register` — Request Body
 
@@ -255,6 +314,9 @@ CREATE TABLE watchlist_items (
 ```
 
 > `firstName`, `lastName`, `phone`, `password` are required. `email` is optional.
+> **New:** the created user starts with `phoneVerified=false`, `emailVerified=false`,
+> and a phone OTP is generated and dispatched automatically. The response still
+> returns a token pair, so the client can call `/otp/verify` immediately.
 
 #### `POST /auth/login` — Request Body
 
@@ -267,6 +329,37 @@ CREATE TABLE watchlist_items (
 ```
 
 > Either `phone` or `email` must be provided. `phone` takes priority if both are sent.
+> **New:** returns `401` with `"Phone number not verified — verify via /otp/verify before logging in"`
+> if `phoneVerified` is still `false`.
+
+### OTP — NEW
+
+| Method | Endpoint      | Auth | Rate Limit                          | Description                                                               |
+| ------ | ------------- | ---- | ----------------------------------- | ------------------------------------------------------------------------- |
+| POST   | `/otp/send`   | Yes  | 3 / 15 min / user, 5 / hour / IP    | Generate + dispatch a new OTP, invalidating any previous one of that type |
+| POST   | `/otp/verify` | Yes  | 5 wrong attempts invalidate the OTP | Verify a code, flips `phoneVerified`/`emailVerified` to `true`            |
+
+#### `POST /otp/send` — Request Body
+
+```json
+{ "type": "PHONE" }
+```
+
+```json
+{ "type": "EMAIL" }
+```
+
+#### `POST /otp/verify` — Request Body
+
+```json
+{ "type": "PHONE", "code": "123456" }
+```
+
+> Both endpoints require `Authorization: Bearer <accessToken>` — the same token
+> issued at registration, since the account is real before it's verified.
+> Codes are 6 digits, expire after 5 minutes, and are single-use (deleted on
+> successful verification). In dev mode the code is printed to the application
+> logs by `LoggingOtpSender` — see [OTP Delivery](#otp-delivery--migration-path-to-a-real-provider) below.
 
 ### User
 
@@ -299,7 +392,9 @@ CREATE TABLE watchlist_items (
 
 ```
 POST /auth/register
-  body: { firstName*, lastName*, phone*, password*, email? }
+        │
+        ▼
+  rate limit: 5/hour/IP — 429 if exceeded
         │
         ▼
   validate: phone present + E.164 format
@@ -307,7 +402,10 @@ POST /auth/register
   check: email not already registered (if provided)
         │
         ▼
-  BCrypt(password) → save User
+  BCrypt(password) → save User (phoneVerified=false, emailVerified=false)
+        │
+        ▼
+  OtpService.generateAndSend(user, PHONE)        ← NEW
         │
         ▼
   generate accessToken (sub = userId, 15 min)
@@ -318,6 +416,11 @@ POST /auth/register
 
 
 POST /auth/login
+        │
+        ▼
+  rate limit: 10/15min/IP — 429 if exceeded
+        │
+        ▼
   body: { phone? | email?, password* }
         │
         ▼
@@ -327,6 +430,9 @@ POST /auth/login
         │
         ▼
   BCrypt.matches(raw, hashed) → 401 if fails
+        │
+        ▼
+  user.phoneVerified == false?  → 401 "not verified"     ← NEW
         │
         ▼
   generate accessToken (sub = userId)
@@ -366,6 +472,61 @@ POST /auth/logout
   delete refreshToken from DB → session invalidated
 ```
 
+### OTP Flow — NEW
+
+```
+POST /otp/send
+  Authorization: Bearer <accessToken>
+  body: { type: PHONE | EMAIL }
+        │
+        ▼
+  rate limit: 5/hour/IP → 429 if exceeded
+        │
+        ▼
+  resolve current user from token
+        │
+        ▼
+  OtpService.generateAndSend(user, type)
+    │
+    ├─ rate limit: 3/15min/user → 429 if exceeded
+    ├─ delete any existing OTP of this type for this user
+    ├─ generate 6-digit code via SecureRandom
+    ├─ BCrypt-hash it → store hash + expiresAt(+5min) + attempts=0
+    └─ OtpSender.send(user, type, plainCode)   ← LoggingOtpSender logs it (dev)
+        │
+        ▼
+  return 200 OK
+
+
+POST /otp/verify
+  Authorization: Bearer <accessToken>
+  body: { type: PHONE | EMAIL, code: "123456" }
+        │
+        ▼
+  resolve current user from token
+        │
+        ▼
+  OtpService.verify(user, type, code)
+    │
+    ├─ no active OTP for (user, type)?        → 404
+    ├─ expired?  delete row                    → 400 OtpExpiredException
+    ├─ attempts >= 5?  delete row               → 429 TooManyOtpAttemptsException
+    ├─ BCrypt.matches(code, hash)?
+    │     no  → attempts++; if now >=5, delete + 429; else → 400 InvalidOtpException
+    │     yes → delete row (single-use)
+    │           set user.phoneVerified / emailVerified = true
+        │
+        ▼
+  return 200 OK
+
+
+Background — OtpCleanupScheduler
+  every 10 min (configurable via otp.cleanup-interval-ms)
+        │
+        ▼
+  DELETE FROM otp_verifications WHERE expires_at < now()
+```
+
 ---
 
 ## Request / Response Contracts
@@ -402,6 +563,7 @@ public record LoginRequest(
 ) {}
 // Service validates: at least one of phone/email present
 // Priority: phone > email if both sent
+// NEW: also rejects login if user.phoneVerified == false
 ```
 
 ### AuthResponse.java
@@ -424,7 +586,40 @@ public record UserResponse(
     String email,           // nullable
     String role,
     boolean enabled,
+    boolean phoneVerified,  // NEW
+    boolean emailVerified,  // NEW
     OffsetDateTime createdAt
+) {}
+```
+
+### OtpType.java — NEW
+
+```java
+public enum OtpType {
+    PHONE,
+    EMAIL
+}
+```
+
+### SendOtpRequest.java — NEW
+
+```java
+public record SendOtpRequest(
+    @NotNull(message = "type is required (PHONE or EMAIL)")
+    OtpType type
+) {}
+```
+
+### VerifyOtpRequest.java — NEW
+
+```java
+public record VerifyOtpRequest(
+    @NotNull(message = "type is required (PHONE or EMAIL)")
+    OtpType type,
+
+    @NotBlank(message = "code is required")
+    @Pattern(regexp = "^\\d{6}$", message = "code must be 6 digits")
+    String code
 ) {}
 ```
 
@@ -461,6 +656,16 @@ private Role role = Role.USER;
 @Builder.Default
 private Boolean enabled = true;   // future account suspension support
 
+// NEW
+@Column(name = "phone_verified", nullable = false)
+@Builder.Default
+private boolean phoneVerified = false;   // flipped true by OtpService.verify(PHONE)
+
+// NEW
+@Column(name = "email_verified", nullable = false)
+@Builder.Default
+private boolean emailVerified = false;   // flipped true by OtpService.verify(EMAIL)
+
 @Column(name = "created_at", nullable = false, updatable = false)
 private OffsetDateTime createdAt;
 
@@ -469,6 +674,46 @@ private OffsetDateTime updatedAt;
 ```
 
 > `getUsername()` (from `UserDetails`) returns `id.toString()`, not `phone` or `email` — keeps Spring Security's internal identity decoupled from the actual login fields.
+> `JwtFilter` sets `Authentication#getName()` to this same `id.toString()`; `SecurityUtils.currentUserId()` (new) relies on that to resolve the caller in `OtpController`.
+
+---
+
+## OTP Delivery — Migration Path to a Real Provider
+
+```java
+public interface OtpSender {
+    void send(User user, OtpType type, String plainCode);
+}
+```
+
+- `LoggingOtpSender` is the **dev-only** implementation, active by default
+  (`otp.sender=logging` or unset). It logs the plaintext code at `WARN` level
+  and never touches the database with it — only a BCrypt hash is persisted.
+- To plug in Twilio (or AWS SNS, SES, etc.) later: implement `OtpSender` in a
+  new class (e.g. `TwilioOtpSender`), guard it with
+  `@ConditionalOnProperty(name = "otp.sender", havingValue = "twilio")`, and
+  flip `otp.sender=twilio` in `application-prod.yml` / env vars.
+  `OtpService`, `OtpController`, and the Flyway schema are untouched — this
+  is the entire reason the interface exists.
+
+---
+
+## Rate Limiting — NEW
+
+In-memory Bucket4j buckets, keyed by IP or by user id:
+
+| Limit                 | Scope    | Window                                                                                     |
+| --------------------- | -------- | ------------------------------------------------------------------------------------------ |
+| 5 registrations       | per IP   | 1 hour                                                                                     |
+| 10 login attempts     | per IP   | 15 minutes                                                                                 |
+| 3 OTP sends           | per user | 15 minutes                                                                                 |
+| 5 OTP sends           | per IP   | 1 hour                                                                                     |
+| 5 OTP verify attempts | per OTP  | until invalidated (not time-windowed — tracked on the `otp_verifications.attempts` column) |
+
+> Buckets live in a `ConcurrentHashMap` inside `RateLimitService`, so they're
+> per-JVM-instance — fine for a single instance. Scaling horizontally later
+> means swapping the map for `bucket4j-redis` / `-hazelcast` / `-jcache`; the
+> limit definitions themselves don't change.
 
 ---
 
@@ -483,7 +728,7 @@ private OffsetDateTime updatedAt;
 - [x] `GlobalExceptionHandler`
 - [x] Flyway + `V1__create_users.sql` (firstName, lastName, phone required, email optional, enabled)
 
-### Phase 2 — Auth
+### Phase 2 — Auth ✅
 
 - [x] `Role` enum
 - [x] `User` entity (firstName, lastName, phone NOT NULL, email nullable, enabled), `UserRepository`
@@ -495,6 +740,21 @@ private OffsetDateTime updatedAt;
 - [x] `LoginRequest` — phone or email + password
 - [x] `AuthController` — register, login, refresh, logout
 - [x] `RefreshToken` entity + `V2__create_refresh_tokens.sql`
+
+### Phase 2.5 — OTP Verification + Rate Limiting ✅ NEW
+
+- [x] `V3__add_verification_flags_to_users.sql` — `phone_verified`, `email_verified`
+- [x] `V4__create_otp_verifications.sql` — OTP table, one active row per (user, type)
+- [x] `OtpType`, `OtpVerification` entity, `OtpRepository`
+- [x] `OtpSender` interface + `LoggingOtpSender` (dev) implementation
+- [x] `OtpService` — generate/send (SecureRandom + BCrypt hash), verify (single-use, max 5 attempts), invalidate-previous-on-resend
+- [x] `OtpController` — `POST /otp/send`, `POST /otp/verify`
+- [x] `OtpCleanupScheduler` — periodic purge of expired rows (`@EnableScheduling` added to `TradingApplication`)
+- [x] `RateLimitService` (Bucket4j) — registration, login, OTP-send (per-user and per-IP) limits
+- [x] `AuthService.register()` — creates user unverified, auto-fires phone OTP
+- [x] `AuthService.login()` — blocks unverified phones
+- [x] `SecurityUtils` — resolves current user id from JWT auth context
+- [x] New exceptions: `InvalidOtpException`, `OtpExpiredException`, `TooManyOtpAttemptsException`, `RateLimitExceededException`
 
 ### Phase 3 — User Profile
 
@@ -510,20 +770,23 @@ private OffsetDateTime updatedAt;
 
 ### Phase 5 — Watchlists
 
-- [ ] `V3__create_watchlists.sql`
+- [ ] `V5__create_watchlists.sql`
 - [ ] `Watchlist` + `WatchlistItem` entities
 - [ ] `WatchlistController` — CRUD + items
 
 ### Later (not now)
 
-- Phone + OTP login (Twilio / AWS SNS) — schema already ready
-- Email/phone verification flags (`emailVerified`, `phoneVerified`)
+- Phone + OTP **login** (replacing password with a code) — schema already supports it
+- Real `OtpSender` implementation (Twilio / AWS SNS / SES) — interface is ready, see [OTP Delivery](#otp-delivery--migration-path-to-a-real-provider)
+- Distributed rate limiting (`bucket4j-redis`) for multi-instance deployments
 - Admin endpoint to toggle `enabled` (account suspension)
 - Swagger / OpenAPI
 - WebSocket
 - Redis
 - Portfolio simulator
 - `application-prod.yml` + deployment
+
+~~Email/phone verification flags (`emailVerified`, `phoneVerified`)~~ — ✅ done, see Phase 2.5
 
 ---
 
@@ -547,4 +810,21 @@ docker compose down -v && docker compose up -d
 
 # Run JAR
 java -jar target/trading-0.0.1-SNAPSHOT.jar
+```
+
+### Testing the OTP flow locally
+
+```bash
+# 1. Register — watch the app logs for the OTP (LoggingOtpSender prints it)
+curl -X POST localhost:8080/auth/register -H 'Content-Type: application/json' \
+  -d '{"firstName":"Abhi","lastName":"Sharma","phone":"+919876543210","password":"secret123"}'
+
+# 2. Verify using the code from the logs (token from step 1's response)
+curl -X POST localhost:8080/otp/verify -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <accessToken>' \
+  -d '{"type":"PHONE","code":"123456"}'
+
+# 3. Now login succeeds
+curl -X POST localhost:8080/auth/login -H 'Content-Type: application/json' \
+  -d '{"phone":"+919876543210","password":"secret123"}'
 ```
