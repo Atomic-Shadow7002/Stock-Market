@@ -70,6 +70,7 @@ trading/
     │   │   │   ├── JwtProperties.java
     │   │   │   ├── RefreshToken.java
     │   │   │   ├── LoginRequest.java
+    │   │   │   ├── RefreshRequest.java
     │   │   │   ├── RegisterRequest.java
     │   │   │   └── AuthResponse.java
     │   │   │
@@ -488,12 +489,12 @@ private OffsetDateTime updatedAt;
 - [x] `User` entity (firstName, lastName, phone NOT NULL, email nullable, enabled), `UserRepository`
 - [x] `PasswordEncoder` bean (BCrypt)
 - [x] `JwtService` — generate + validate tokens (sub = userId)
-- [ ] `JwtFilter` — validate Bearer token on every request
-- [ ] `SecurityConfig` — permit `/auth/**`, lock everything else
-- [ ] `RegisterRequest` — firstName + lastName + phone + password required, email optional
-- [ ] `LoginRequest` — phone or email + password
-- [ ] `AuthController` — register, login, refresh, logout
-- [ ] `RefreshToken` entity + `V2__create_refresh_tokens.sql`
+- [x] `JwtFilter` — validate Bearer token on every request
+- [x] `SecurityConfig` — permit `/auth/**`, lock everything else
+- [x] `RegisterRequest` — firstName + lastName + phone + password required, email optional
+- [x] `LoginRequest` — phone or email + password
+- [x] `AuthController` — register, login, refresh, logout
+- [x] `RefreshToken` entity + `V2__create_refresh_tokens.sql`
 
 ### Phase 3 — User Profile
 
