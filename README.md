@@ -52,33 +52,36 @@ trading/
     ├── main/
     │   ├── java/com/luffy/trading/
     │   │   │
-    │   │   ├── TradingApplication.java          ← @EnableScheduling added (OTP cleanup)
+    │   │   ├── TradingApplication.java
     │   │   │
     │   │   ├── config/
     │   │   │   ├── SecurityConfig.java
     │   │   │   ├── CorsConfig.java
     │   │   │   ├── JacksonConfig.java
-    │   │   │   └── RateLimitService.java         ← NEW: Bucket4j buckets
+    │   │   │   ├── RateLimitService.java
+    │   │   │   ├── AdminSeedProperties.java
+    │   │   │   └── AdminSeeder.java
     │   │   │
     │   │   ├── exception/
     │   │   │   ├── JwtValidationException.java
-    │   │   │   ├── GlobalExceptionHandler.java     ← updated: OTP/rate-limit handlers
+    │   │   │   ├── GlobalExceptionHandler.java
     │   │   │   ├── ResourceNotFoundException.java
     │   │   │   ├── DuplicateResourceException.java
-    │   │   │   ├── InvalidOtpException.java        ← NEW
-    │   │   │   ├── OtpExpiredException.java         ← NEW
-    │   │   │   ├── TooManyOtpAttemptsException.java ← NEW
-    │   │   │   └── RateLimitExceededException.java  ← NEW
+    │   │   │   ├── InvalidOtpException.java
+    │   │   │   ├── OtpExpiredException.java
+    │   │   │   ├── TooManyOtpAttemptsException.java
+    │   │   │   ├── RateLimitExceededException.java
+    │   │   │   └── IllegalSelfActionException.java
     │   │   │
     │   │   ├── response/
     │   │   │   └── ApiResponse.java
     │   │   │
     │   │   ├── util/
-    │   │   │   └── SecurityUtils.java              ← NEW: current userId from JWT context
+    │   │   │   └── SecurityUtils.java
     │   │   │
     │   │   ├── auth/
-    │   │   │   ├── AuthController.java              ← updated: IP rate limiting
-    │   │   │   ├── AuthService.java                 ← updated: triggers OTP, blocks unverified login
+    │   │   │   ├── AuthController.java
+    │   │   │   ├── AuthService.java
     │   │   │   ├── AuthRepository.java
     │   │   │   ├── JwtService.java
     │   │   │   ├── JwtFilter.java
@@ -89,28 +92,34 @@ trading/
     │   │   │   ├── RegisterRequest.java
     │   │   │   └── AuthResponse.java
     │   │   │
-    │   │   ├── otp/                                ← NEW PACKAGE
-    │   │   │   ├── OtpType.java                     enum PHONE / EMAIL
-    │   │   │   ├── OtpVerification.java              entity — BCrypt hash only, never plaintext
+    │   │   ├── otp/
+    │   │   │   ├── OtpType.java
+    │   │   │   ├── OtpVerification.java
     │   │   │   ├── OtpRepository.java
-    │   │   │   ├── OtpSender.java                    abstraction — Twilio/SES plug in later
-    │   │   │   ├── LoggingOtpSender.java             dev-only impl, logs the code
-    │   │   │   ├── OtpService.java                  generate / send / verify business logic
+    │   │   │   ├── OtpSender.java
+    │   │   │   ├── LoggingOtpSender.java
+    │   │   │   ├── OtpService.java
     │   │   │   ├── SendOtpRequest.java
     │   │   │   ├── VerifyOtpRequest.java
-    │   │   │   ├── OtpController.java                POST /otp/send, POST /otp/verify
-    │   │   │   └── OtpCleanupScheduler.java          purges expired OTPs every 10 min
+    │   │   │   ├── OtpController.java
+    │   │   │   └── OtpCleanupScheduler.java
     │   │   │
     │   │   ├── user/
-    │   │   │   ├── User.java                         ← updated: phoneVerified, emailVerified
+    │   │   │   ├── User.java
     │   │   │   ├── Role.java
     │   │   │   ├── UserRepository.java
     │   │   │   ├── UserController.java
     │   │   │   ├── UserService.java
     │   │   │   ├── UserResponse.java
-    │   │   │   └── UpdateProfileRequest.java
+    │   │   │   ├── UpdateProfileRequest.java
+    │   │   │   └── ChangePasswordRequest.java
     │   │   │
-    │   │   ├── market/
+    │   │   ├── admin/
+    │   │   │   ├── AdminController.java
+    │   │   │   ├── AdminUserService.java
+    │   │   │   └── UpdateUserStatusRequest.java
+    │   │   │
+    │   │   ├── market/                                Phase 4 — not built yet
     │   │   │   ├── MarketController.java
     │   │   │   ├── MarketService.java
     │   │   │   ├── SmartApiClient.java
@@ -118,7 +127,7 @@ trading/
     │   │   │   ├── QuoteResponse.java
     │   │   │   └── SearchResponse.java
     │   │   │
-    │   │   └── watchlist/
+    │   │   └── watchlist/                              Phase 5 — not built yet
     │   │       ├── Watchlist.java
     │   │       ├── WatchlistItem.java
     │   │       ├── WatchlistRepository.java
@@ -129,25 +138,19 @@ trading/
     │   │       └── WatchlistResponse.java
     │   │
     │   └── resources/
-    │       ├── application.yml                       ← updated: otp.* properties
+    │       ├── application.yml
     │       └── db/
     │           └── migration/
     │               ├── V1__create_users.sql
     │               ├── V2__create_refresh_tokens.sql
-    │               ├── V3__add_verification_flags_to_users.sql  ← NEW
-    │               ├── V4__create_otp_verifications.sql          ← NEW
-    │               └── V5__create_watchlists.sql                 ← not built yet (Phase 5 below), reserved next number
+    │               ├── V3__add_verification_flags_to_users.sql
+    │               ├── V4__create_otp_verifications.sql
+    │               ├── V5__widen_otp_type_for_password_reset.sql
+    │               └── V6__create_watchlists.sql not built yet
     │
     └── test/
         └── java/com/luffy/trading/
-            ├── auth/
-            │   └── AuthServiceTest.java
-            ├── otp/                                  ← NEW
-            │   └── OtpServiceTest.java
-            ├── user/
-            │   └── UserServiceTest.java
-            └── watchlist/
-                └── WatchlistServiceTest.java
+            └── TradingApplicationTests.java
 ```
 
 ---
@@ -283,9 +286,18 @@ CREATE TABLE otp_verifications (
 
 CREATE INDEX idx_otp_expires_at ON otp_verifications (expires_at);
 
--- V5__create_watchlists.sql                  ← NOT YET BUILT (Phase 5) — numbered here as a
--- placeholder so whoever implements watchlists knows which version is next in line.
--- Until it exists, V4 is genuinely the latest applied migration.
+-- V5__widen_otp_type_for_password_reset.sql          ← NEW (Phase 3)
+-- Widens type from VARCHAR(10) to VARCHAR(20) and updates the CHECK
+-- constraint so PASSWORD_RESET (14 chars) fits alongside PHONE / EMAIL.
+ALTER TABLE otp_verifications
+    ALTER COLUMN type TYPE VARCHAR(20);
+
+ALTER TABLE otp_verifications
+    DROP CONSTRAINT IF EXISTS otp_verifications_type_check;
+
+ALTER TABLE otp_verifications
+    ADD CONSTRAINT otp_verifications_type_check
+    CHECK (type IN ('PHONE', 'EMAIL', 'PASSWORD_RESET'));
 ```
 
 ---
@@ -301,37 +313,6 @@ CREATE INDEX idx_otp_expires_at ON otp_verifications (expires_at);
 | POST   | `/auth/refresh`  | No   | —                | Refresh access token                                       |
 | POST   | `/auth/logout`   | Yes  | —                | Revoke refresh token                                       |
 
-#### `POST /auth/register` — Request Body
-
-```json
-{
-  "firstName": "Abhi",
-  "lastName": "Sharma",
-  "phone": "+919876543210",
-  "password": "secret123",
-  "email": "abhi@example.com"
-}
-```
-
-> `firstName`, `lastName`, `phone`, `password` are required. `email` is optional.
-> **New:** the created user starts with `phoneVerified=false`, `emailVerified=false`,
-> and a phone OTP is generated and dispatched automatically. The response still
-> returns a token pair, so the client can call `/otp/verify` immediately.
-
-#### `POST /auth/login` — Request Body
-
-```json
-{ "phone": "+919876543210", "password": "secret123" }
-```
-
-```json
-{ "email": "abhi@example.com", "password": "secret123" }
-```
-
-> Either `phone` or `email` must be provided. `phone` takes priority if both are sent.
-> **New:** returns `401` with `"Phone number not verified — verify via /otp/verify before logging in"`
-> if `phoneVerified` is still `false`.
-
 ### OTP — NEW
 
 | Method | Endpoint      | Auth | Rate Limit                          | Description                                                               |
@@ -339,35 +320,26 @@ CREATE INDEX idx_otp_expires_at ON otp_verifications (expires_at);
 | POST   | `/otp/send`   | Yes  | 3 / 15 min / user, 5 / hour / IP    | Generate + dispatch a new OTP, invalidating any previous one of that type |
 | POST   | `/otp/verify` | Yes  | 5 wrong attempts invalidate the OTP | Verify a code, flips `phoneVerified`/`emailVerified` to `true`            |
 
-#### `POST /otp/send` — Request Body
+### User (self-service) — Phase 3 ✅ NEW
 
-```json
-{ "type": "PHONE" }
-```
+| Method | Endpoint                 | Auth | Description                                                                   |
+| ------ | ------------------------ | ---- | ----------------------------------------------------------------------------- |
+| GET    | `/users/me`              | Yes  | Get own profile                                                               |
+| PUT    | `/users/me`              | Yes  | Update `firstName`/`lastName`/`email` — does **not** reset `emailVerified`    |
+| POST   | `/users/me/password/otp` | Yes  | Step 1 of changing your password — sends a `PASSWORD_RESET` OTP to your phone |
+| PUT    | `/users/me/password`     | Yes  | Step 2 — body `{code, newPassword}`; on success revokes all refresh tokens    |
 
-```json
-{ "type": "EMAIL" }
-```
+### Admin — Phase 3 ✅ NEW
 
-#### `POST /otp/verify` — Request Body
+All routes below require `ROLE_ADMIN`, enforced twice: `@PreAuthorize` on
+`AdminController` and a `/admin/**` matcher in `SecurityConfig`.
 
-```json
-{ "type": "PHONE", "code": "123456" }
-```
-
-> Both endpoints require `Authorization: Bearer <accessToken>` — the same token
-> issued at registration, since the account is real before it's verified.
-> Codes are 6 digits, expire after 5 minutes, and are single-use (deleted on
-> successful verification). In dev mode the code is printed to the application
-> logs by `LoggingOtpSender` — see [OTP Delivery](#otp-delivery--migration-path-to-a-real-provider) below.
-
-### User
-
-| Method | Endpoint             | Auth | Description            |
-| ------ | -------------------- | ---- | ---------------------- |
-| GET    | `/users/me`          | Yes  | Get own profile        |
-| PUT    | `/users/me`          | Yes  | Update name(s) / email |
-| PUT    | `/users/me/password` | Yes  | Change password        |
+| Method | Endpoint                          | Auth  | Description                                                     |
+| ------ | --------------------------------- | ----- | --------------------------------------------------------------- |
+| GET    | `/admin/users?phone=&page=&size=` | Admin | List/search all users, optional partial phone filter, paginated |
+| GET    | `/admin/users/{id}`               | Admin | View any single user's full profile                             |
+| PATCH  | `/admin/users/{id}/status`        | Admin | body `{enabled}` — enable/disable; blocked from targeting self  |
+| POST   | `/admin/users/{id}/promote`       | Admin | Promotes a user to `ADMIN`, idempotent                          |
 
 ### Market
 
@@ -472,7 +444,7 @@ POST /auth/logout
   delete refreshToken from DB → session invalidated
 ```
 
-### OTP Flow — NEW
+### OTP Flow
 
 ```
 POST /otp/send
@@ -527,176 +499,96 @@ Background — OtpCleanupScheduler
   DELETE FROM otp_verifications WHERE expires_at < now()
 ```
 
----
+### Password Change Flow
 
-## Request / Response Contracts
-
-### RegisterRequest.java
-
-```java
-public record RegisterRequest(
-    @NotBlank(message = "First name is required")
-    String firstName,       // required
-
-    @NotBlank(message = "Last name is required")
-    String lastName,        // required
-
-    @NotBlank(message = "Phone is required")
-    @Pattern(regexp = "^\\+[1-9]\\d{7,14}$", message = "Phone must be E.164 format")
-    String phone,           // required
-
-    @NotBlank(message = "Password is required")
-    String password,        // required
-
-    @Email(message = "Email must be valid")
-    String email            // optional
-) {}
 ```
 
-### LoginRequest.java
+POST /users/me/password/otp
+Authorization: Bearer <accessToken>
+│
+▼
+OtpService.generateAndSend(currentUser, PASSWORD_RESET)
+(same rate limit + single-active-OTP-per-type machinery as PHONE/EMAIL —
+this is a distinct OtpType, so it doesn't collide with an in-flight
+phone-verification OTP)
+│
+▼
+return 200 OK — code logged by LoggingOtpSender in dev
 
-```java
-public record LoginRequest(
-    String phone,           // optional — phone OR email required
-    String email,           // optional
-    @NotBlank String password
-) {}
-// Service validates: at least one of phone/email present
-// Priority: phone > email if both sent
-// NEW: also rejects login if user.phoneVerified == false
+PUT /users/me/password
+Authorization: Bearer <accessToken>
+body: { code, newPassword }
+│
+▼
+OtpService.verify(currentUser, PASSWORD_RESET, code)
+(same expiry/attempt-lockout rules as PHONE/EMAIL, but does NOT flip
+phoneVerified/emailVerified on success — that's not what this OTP proves)
+│
+▼
+BCrypt(newPassword) → save user
+│
+▼
+authRepository.deleteAllByUserId(user.id) ← revoke every refresh token;
+forces re-login everywhere
+│
+▼
+return 200 OK
+
 ```
 
-### AuthResponse.java
+### Admin Flow
 
-```java
-public record AuthResponse(
-    String accessToken,
-    String refreshToken
-) {}
 ```
 
-### UserResponse.java
+GET /admin/users?phone=&page=&size=
+Authorization: Bearer <accessToken>
+│
+▼
+@PreAuthorize("hasRole('ADMIN')") + SecurityConfig /admin/\*\* rule → 403 if not admin
+│
+▼
+phone param present? → findByPhoneContainingIgnoreCase (partial match)
+else → findAll (paginated)
 
-```java
-public record UserResponse(
-    UUID id,
-    String firstName,
-    String lastName,
-    String phone,
-    String email,           // nullable
-    String role,
-    boolean enabled,
-    boolean phoneVerified,  // NEW
-    boolean emailVerified,  // NEW
-    OffsetDateTime createdAt
-) {}
+PATCH /admin/users/{id}/status { enabled }
+│
+▼
+id == caller's own id? → 400 IllegalSelfActionException
+│
+▼
+set user.enabled, save
+│
+▼
+enabled == false? → authRepository.deleteAllByUserId(user.id)
+(JwtFilter already blocks a disabled user's access
+token; this also kills their refresh token so
+/auth/refresh can't mint a new one)
+
+POST /admin/users/{id}/promote
+│
+▼
+set user.role = ADMIN, save (idempotent — promoting an existing admin is a no-op)
+
 ```
 
-### OtpType.java — NEW
+### Admin Bootstrap
 
-```java
-public enum OtpType {
-    PHONE,
-    EMAIL
-}
 ```
 
-### SendOtpRequest.java — NEW
+Application startup
+│
+▼
+AdminSeeder.run() (ApplicationRunner, runs once per boot)
+│
+▼
+userRepository.existsByRole(ADMIN)?
+yes → do nothing (already bootstrapped)
+no → admin.seed.phone/password configured?
+no → log a warning, skip
+yes → create User(role=ADMIN, phoneVerified=true) using the
+real PasswordEncoder bean, save
 
-```java
-public record SendOtpRequest(
-    @NotNull(message = "type is required (PHONE or EMAIL)")
-    OtpType type
-) {}
 ```
-
-### VerifyOtpRequest.java — NEW
-
-```java
-public record VerifyOtpRequest(
-    @NotNull(message = "type is required (PHONE or EMAIL)")
-    OtpType type,
-
-    @NotBlank(message = "code is required")
-    @Pattern(regexp = "^\\d{6}$", message = "code must be 6 digits")
-    String code
-) {}
-```
-
----
-
-## User Entity — Key Fields
-
-```java
-@Id
-@GeneratedValue(strategy = GenerationType.UUID)
-private UUID id;
-
-@Column(name = "first_name", nullable = false, length = 100)
-private String firstName;
-
-@Column(name = "last_name", nullable = false, length = 100)
-private String lastName;
-
-@Column(nullable = false, unique = true, length = 20)
-private String phone;       // E.164, always present
-
-@Column(unique = true, length = 255)
-private String email;       // nullable, set at registration or later via PUT /users/me
-
-@Column(nullable = false, length = 255)
-private String password;    // BCrypt hashed
-
-@Enumerated(EnumType.STRING)
-@Column(nullable = false, length = 20)
-@Builder.Default
-private Role role = Role.USER;
-
-@Column(nullable = false)
-@Builder.Default
-private Boolean enabled = true;   // future account suspension support
-
-// NEW
-@Column(name = "phone_verified", nullable = false)
-@Builder.Default
-private boolean phoneVerified = false;   // flipped true by OtpService.verify(PHONE)
-
-// NEW
-@Column(name = "email_verified", nullable = false)
-@Builder.Default
-private boolean emailVerified = false;   // flipped true by OtpService.verify(EMAIL)
-
-@Column(name = "created_at", nullable = false, updatable = false)
-private OffsetDateTime createdAt;
-
-@Column(name = "updated_at", nullable = false)
-private OffsetDateTime updatedAt;
-```
-
-> `getUsername()` (from `UserDetails`) returns `id.toString()`, not `phone` or `email` — keeps Spring Security's internal identity decoupled from the actual login fields.
-> `JwtFilter` sets `Authentication#getName()` to this same `id.toString()`; `SecurityUtils.currentUserId()` (new) relies on that to resolve the caller in `OtpController`.
-
----
-
-## OTP Delivery — Migration Path to a Real Provider
-
-```java
-public interface OtpSender {
-    void send(User user, OtpType type, String plainCode);
-}
-```
-
-- `LoggingOtpSender` is the **dev-only** implementation, active by default
-  (`otp.sender=logging` or unset). It logs the plaintext code at `WARN` level
-  and never touches the database with it — only a BCrypt hash is persisted.
-- To plug in Twilio (or AWS SNS, SES, etc.) later: implement `OtpSender` in a
-  new class (e.g. `TwilioOtpSender`), guard it with
-  `@ConditionalOnProperty(name = "otp.sender", havingValue = "twilio")`, and
-  flip `otp.sender=twilio` in `application-prod.yml` / env vars.
-  `OtpService`, `OtpController`, and the Flyway schema are untouched — this
-  is the entire reason the interface exists.
-
----
 
 ## Rate Limiting — NEW
 
@@ -756,11 +648,22 @@ In-memory Bucket4j buckets, keyed by IP or by user id:
 - [x] `SecurityUtils` — resolves current user id from JWT auth context
 - [x] New exceptions: `InvalidOtpException`, `OtpExpiredException`, `TooManyOtpAttemptsException`, `RateLimitExceededException`
 
-### Phase 3 — User Profile
+### Phase 3 — User Profile + Admin ✅ NEW
 
-- [ ] `GET /users/me`
-- [ ] `PUT /users/me` (update firstName/lastName and/or add/change email)
-- [ ] `PUT /users/me/password`
+- [x] `V5__widen_otp_type_for_password_reset.sql`
+- [x] `OtpType.PASSWORD_RESET`; `OtpService.verify()` no longer flips a
+      verification flag for that type
+- [x] `UserResponse`, `UpdateProfileRequest`, `ChangePasswordRequest`
+- [x] `UserService` / `UserController` — `GET /users/me`, `PUT /users/me`,
+      `POST /users/me/password/otp`, `PUT /users/me/password`
+- [x] `UserRepository` — `existsByRole`, `findByPhoneContainingIgnoreCase`
+- [x] `admin` package — `AdminController`, `AdminUserService`,
+      `UpdateUserStatusRequest`
+- [x] `AdminSeedProperties` / `AdminSeeder` — bootstraps the first admin on
+      startup from config, no hand-typed password hashes
+- [x] `SecurityConfig` — `@EnableMethodSecurity`, `/admin/**` → `hasRole("ADMIN")`
+- [x] `GlobalExceptionHandler` — `AccessDeniedException` (403),
+      `IllegalSelfActionException` (400)
 
 ### Phase 4 — Market Data
 
