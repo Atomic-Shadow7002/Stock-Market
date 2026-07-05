@@ -96,10 +96,15 @@ public class OtpService {
         // Success — single-use, delete immediately.
         otpRepository.delete(otp);
 
-        if (type == OtpType.PHONE) {
-            user.setPhoneVerified(true);
-        } else {
-            user.setEmailVerified(true);
+        // PHONE/EMAIL codes prove contact-detail ownership, so they flip the
+        // matching verification flag. PASSWORD_RESET codes prove "you still
+        // hold this phone right now" for a security-sensitive action — they
+        // deliberately do NOT touch phoneVerified/emailVerified. The caller
+        // (UserService.changePassword) is responsible for what happens next.
+        switch (type) {
+            case PHONE -> user.setPhoneVerified(true);
+            case EMAIL -> user.setEmailVerified(true);
+            case PASSWORD_RESET -> { /* no verification flag to flip */ }
         }
         userRepository.save(user);
     }

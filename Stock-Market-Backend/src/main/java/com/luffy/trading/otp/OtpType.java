@@ -2,5 +2,6 @@ package com.luffy.trading.otp;
 
 public enum OtpType {
     PHONE,
-    EMAIL
+    EMAIL,
+    PASSWORD_RESET
 }
