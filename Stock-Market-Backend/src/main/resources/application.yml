@@ -37,3 +37,11 @@ logging:
 otp:
   sender: logging # dev default; switch to "twilio" once implemented
   cleanup-interval-ms: 600000 # 10 min between expired-OTP sweeps
+
+admin:
+  seed:
+    phone: ${ADMIN_SEED_PHONE:+910000000001}
+    password: ${ADMIN_SEED_PASSWORD:ChangeMe@123}
+    first-name: ${ADMIN_SEED_FIRST_NAME:Admin}
+    last-name: ${ADMIN_SEED_LAST_NAME:User}
+    email: ${ADMIN_SEED_EMAIL:}
