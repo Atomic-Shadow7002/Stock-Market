@@ -1,0 +1,69 @@
+spring:
+  application:
+    name: angel-market-service
+
+  config:
+    import: "optional:file:.env[.properties]"
+
+server:
+  port: 8081
+
+angel:
+  client-code: ${ANGEL_CLIENT_CODE}
+  pin: ${ANGEL_PIN}
+  totp-secret: ${ANGEL_TOTP_SECRET}
+  api-key: ${ANGEL_API_KEY}
+  local-ip: ${ANGEL_LOCAL_IP:127.0.0.1}
+  public-ip: ${ANGEL_PUBLIC_IP:127.0.0.1}
+  mac-address: ${ANGEL_MAC_ADDRESS:AA:BB:CC:DD:EE:FF}
+  rest-base-url: https://apiconnect.angelone.in
+  ws-url: wss://smartapisocket.angelone.in/smart-stream
+  daily-relogin-cron: "0 45 8 * * *"
+  token-refresh-interval-ms: 1500000
+
+internal:
+  api-key: ${INTERNAL_API_KEY:change-me-internal-key}
+
+cache:
+  quote-ttl-ms: 1000
+  candle-ttl-ms:
+    ONE_MINUTE: 30000
+    FIVE_MINUTE: 60000
+    FIFTEEN_MINUTE: 300000
+    ONE_HOUR: 900000
+    ONE_DAY: 3600000
+  greeks-ttl-ms: 60000
+  brokerage-ttl-ms: 300000
+  margin-ttl-ms: 300000
+  # Historical OI — same interval constants as candle-ttl-ms above, kept as its own map
+  # so OI retention can be tuned independently of price-candle retention later.
+  oi-ttl-ms:
+    ONE_MINUTE: 30000
+    THREE_MINUTE: 60000
+    FIVE_MINUTE: 60000
+    TEN_MINUTE: 300000
+    FIFTEEN_MINUTE: 300000
+    THIRTY_MINUTE: 900000
+    ONE_HOUR: 900000
+    ONE_DAY: 3600000
+  # Exchange circulars, not live market data — safe to hold for hours, not seconds.
+  intraday-eligible-ttl-ms: 21600000   # 6 hours
+  cautionary-ttl-ms: 3600000           # 1 hour
+
+feed:
+  allowed-origins: ${FEED_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:8080}
+
+instrument:
+  dump-url: https://margincalculator.angelone.in/OpenAPI_File/files/OpenAPIScripMaster.json
+  cache-file-path: ${INSTRUMENT_CACHE_FILE:./data/instruments-cache.json}
+  # AngelOne regenerates the dump once a day; refresh a bit before market pre-open (9:00 IST)
+  refresh-cron: "0 30 8 * * *"
+  # If the currently-loaded snapshot is older than this, GET /instruments/status reports
+  # stale:true (see InstrumentService.status()). 30h = one missed daily refresh cycle
+  # (24h) plus a buffer, so a single transient AngelOne outage doesn't flip this to true
+  # the moment the clock ticks past 24h — only a genuinely missed cycle does.
+  stale-after-hours: 30
+
+logging:
+  level:
+    com.angelone.angelone_market_service: DEBUG
