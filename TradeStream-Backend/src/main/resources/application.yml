@@ -2,6 +2,9 @@ spring:
   application:
     name: trading
 
+  config:
+    import: "optional:file:.env[.properties]"
+
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/trading}
     username: ${DB_USERNAME:postgres}
@@ -45,3 +48,11 @@ admin:
     first-name: ${ADMIN_SEED_FIRST_NAME:Admin}
     last-name: ${ADMIN_SEED_LAST_NAME:User}
     email: ${ADMIN_SEED_EMAIL:}
+
+# Angel One market-data service integration
+# The backend calls this service as an internal consumer (server-to-server).
+# INTERNAL_API_KEY must match the value configured in angelone-market-service's .env.
+angelone:
+  base-url: ${ANGEL_ONE_BASE_URL:http://localhost:8081}
+  internal-api-key: ${INTERNAL_API_KEY}
+  ws-feed-url: ${ANGEL_ONE_WS_URL:ws://localhost:8081/ws/feed}

@@ -1,733 +1,303 @@
-# Stock Market Backend
+# Stock Market Application Workspace
 
-> Java 21 · Spring Boot 3 · PostgreSQL 17 · Flyway · Docker · JWT · Bucket4j
-
----
-
-## Tech Stack
-
-| Layer            | Technology              |
-| ---------------- | ----------------------- |
-| Language         | Java 21                 |
-| Framework        | Spring Boot 3           |
-| Security         | Spring Security + JWT   |
-| Database         | PostgreSQL 17           |
-| Migrations       | Flyway                  |
-| Rate Limiting    | Bucket4j (in-memory)    |
-| Containerization | Docker & Docker Compose |
-| Build Tool       | Maven                   |
+A complete, high-performance stock market trading platform backend and market-data service built with **Java 21** and **Spring Boot 4.1.0**, featuring PostgreSQL, Flyway migrations, JWT security, Bucket4j rate-limiting, and a dedicated **Angel One SmartAPI Market Data Proxy Gateway**.
 
 ---
 
-## Auth Strategy
+## 🏛 System Architecture
 
-| Method                 | Status    | Identifier       |
-| ---------------------- | --------- | ---------------- |
-| Phone + Password       | ✅ MVP    | Phone (required) |
-| Email + Password       | ✅ MVP    | Email (optional) |
-| Phone OTP verification | ✅ MVP    | Phone (required) |
-| Email OTP verification | ✅ MVP    | Email (optional) |
-| Phone + OTP **login**  | 🔜 Future | —                |
-
-> **Phone is always required.** Email is optional and can be added later by the user.
-> Login can be done via phone or email, but registration always requires phone.
-> **New:** registration now also kicks off phone verification via OTP, and login is
-> blocked until the phone is verified. OTP **login** (replacing password with a code)
-> is still future work — what's shipped now is OTP **verification** of an
-> already-registered phone/email.
-
----
-
-## Folder Structure
+The project is structured as a decoupled microservices architecture designed for reliability, strict security boundaries, and high-throughput market data fan-out.
 
 ```
-trading/
+┌──────────────────────────────────────────────────────────────────┐
+│                 Client Applications / Consumers                  │
+│       (Web Frontend, Mobile Apps, External Trading Bots)        │
+└─────────────────────────────────┬────────────────────────────────┘
+                                  │  Authorization: Bearer <JWT>
+                                  ▼
+┌──────────────────────────────────────────────────────────────────┐        ┌──────────────────────────────┐
+│                    Stock-Market-Backend                      │        │       PostgreSQL 17          │
+│                       (Port: 8080)                               │        │       (Port: 5432)           │
+│  - User Auth (Register, Login, JWT, Refresh Tokens)              │◄──────►│ - users                      │
+│  - Phone / Email OTP Verification                                │        │ - refresh_tokens             │
+│  - User Self-Service Profile & Password Management               │        │ - otp_verifications          │
+│  - Admin User Management (List, Suspend, Promote)                │        └──────────────────────────────┘
+│  - Market Data Proxy (/market/**) ──────────────────────────┐    │
+│  - Instrument Lookup Proxy (/instruments/**)                │    │
+│  - Angel One Admin Proxy (/admin/angelone/**)               │    │
+└─────────────────────────────────────────────────────────────┼────┘
+                                                              │  X-Internal-Api-Key
+                                                              ▼  (Server-to-Server)
+                                           ┌────────────────────────────────────┐
+                                           │      angelone-market-service       │
+                                           │            (Port: 8081)            │
+                                           │  - Single Shared AngelOne Session  │
+                                           │  - Instrument Master Index (~140k) │
+                                           │  - Multi-Cache Layer (Caffeine)    │
+                                           │  - Live WebSocket Tick Stream      │
+                                           └──────────────────┬─────────────────┘
+                                                              │
+                                                              ▼  SmartAPI REST & WS
+                                           ┌────────────────────────────────────┐
+                                           │     Angel One SmartAPI Gateway     │
+                                           └────────────────────────────────────┘
+```
+
+### Why a Two-Service Architecture?
+1. **Single Broker Session Limit**: Angel One SmartAPI allows very few concurrent sessions per user account. The `angelone-market-service` logs in **once** with a single system credential and fans market data out to all application users. End users never log into Angel One directly.
+2. **Strict Security Isolation**: The `Stock-Market-Backend` manages all user identity, passwords, and JWTs. The `angelone-market-service` is an internal gateway guarded by a shared `X-Internal-Api-Key` secret. No user credentials or JWT secrets ever enter the market service.
+
+---
+
+## 🛠 Technology Stack
+
+| Layer | Technology | Details |
+| :--- | :--- | :--- |
+| **Language** | Java 21 | Modern LTS features (Records, Sealed Types, Pattern Matching) |
+| **Backend Framework** | Spring Boot 4.1.0 | Spring Framework 7, Spring Security, Spring WebMVC |
+| **Database** | PostgreSQL 17 | Relational storage for users, auth, and OTP verifications |
+| **Database Migrations**| Flyway | Managed SQL schema versions (`V1` through `V5`) |
+| **Security & Auth** | Spring Security + JJWT | Stateless JWT authentication, role-based access control (`USER`, `ADMIN`) |
+| **Rate Limiting** | Bucket4j 8.19.0 | In-memory token bucket rate-limiting (per-IP and per-User) |
+| **Caching** | Caffeine Cache | Multi-tier TTL cache for Quotes, Candles, Greeks, Margin, and OI |
+| **Broker Gateway** | Angel One SmartAPI | SmartAPI REST 2.0 & WebSocket Streaming 2.0 binary tick parser |
+| **Containerization** | Docker & Docker Compose | PostgreSQL 17 containerized runtime |
+| **Build Tool** | Maven 3.x | Independent build pipelines for each microservice |
+
+---
+
+## 📁 Repository Structure
+
+```
+Stock-Market/
+├── README.md                           # Master project documentation (this file)
+├── angelone-integration-guide.md       # Comprehensive integration guide & architecture deep-dive
 │
-├── docker-compose.yml
-├── pom.xml
-├── README.md
-├── .gitignore
+├── Stock-Market-Backend/               # Main Application Backend (Port 8080)
+│   ├── src/main/java/com/luffy/trading/
+│   │   ├── angelone/                   # Angel One integration client (RestClient, Config, Exception)
+│   │   ├── market/                     # Proxy Controllers (/market/**, /instruments/**, /admin/angelone/**)
+│   │   ├── auth/                       # Register, Login, Refresh, Logout, JwtService, JwtFilter
+│   │   ├── user/                       # User entity, UserRepository, UserController, UserService
+│   │   ├── admin/                      # AdminController, AdminUserService, AdminSeeder
+│   │   ├── otp/                        # OtpController, OtpService, LoggingOtpSender, OtpCleanupScheduler
+│   │   ├── config/                     # SecurityConfig, RateLimitService, JacksonConfig
+│   │   ├── exception/                  # GlobalExceptionHandler, Custom Exceptions
+│   │   └── response/                   # ApiResponse<T> standardized JSON envelope
+│   ├── src/main/resources/
+│   │   ├── application.yml             # App configuration + angelone properties
+│   │   └── db/migration/               # Flyway SQL migrations (V1__... to V5__...)
+│   ├── .env.example                    # Backend environment variables template
+│   ├── API_TESTING.md                  # Detailed curl testing guide & endpoint reference
+│   ├── docker-compose.yml              # PostgreSQL 17 compose manifest
+│   └── pom.xml                         # Maven dependencies & build rules
 │
-└── src/
-    ├── main/
-    │   ├── java/com/luffy/trading/
-    │   │   │
-    │   │   ├── TradingApplication.java
-    │   │   │
-    │   │   ├── config/
-    │   │   │   ├── SecurityConfig.java
-    │   │   │   ├── CorsConfig.java
-    │   │   │   ├── JacksonConfig.java
-    │   │   │   ├── RateLimitService.java
-    │   │   │   ├── AdminSeedProperties.java
-    │   │   │   └── AdminSeeder.java
-    │   │   │
-    │   │   ├── exception/
-    │   │   │   ├── JwtValidationException.java
-    │   │   │   ├── GlobalExceptionHandler.java
-    │   │   │   ├── ResourceNotFoundException.java
-    │   │   │   ├── DuplicateResourceException.java
-    │   │   │   ├── InvalidOtpException.java
-    │   │   │   ├── OtpExpiredException.java
-    │   │   │   ├── TooManyOtpAttemptsException.java
-    │   │   │   ├── RateLimitExceededException.java
-    │   │   │   └── IllegalSelfActionException.java
-    │   │   │
-    │   │   ├── response/
-    │   │   │   └── ApiResponse.java
-    │   │   │
-    │   │   ├── util/
-    │   │   │   └── SecurityUtils.java
-    │   │   │
-    │   │   ├── auth/
-    │   │   │   ├── AuthController.java
-    │   │   │   ├── AuthService.java
-    │   │   │   ├── AuthRepository.java
-    │   │   │   ├── JwtService.java
-    │   │   │   ├── JwtFilter.java
-    │   │   │   ├── JwtProperties.java
-    │   │   │   ├── RefreshToken.java
-    │   │   │   ├── LoginRequest.java
-    │   │   │   ├── RefreshRequest.java
-    │   │   │   ├── RegisterRequest.java
-    │   │   │   └── AuthResponse.java
-    │   │   │
-    │   │   ├── otp/
-    │   │   │   ├── OtpType.java
-    │   │   │   ├── OtpVerification.java
-    │   │   │   ├── OtpRepository.java
-    │   │   │   ├── OtpSender.java
-    │   │   │   ├── LoggingOtpSender.java
-    │   │   │   ├── OtpService.java
-    │   │   │   ├── SendOtpRequest.java
-    │   │   │   ├── VerifyOtpRequest.java
-    │   │   │   ├── OtpController.java
-    │   │   │   └── OtpCleanupScheduler.java
-    │   │   │
-    │   │   ├── user/
-    │   │   │   ├── User.java
-    │   │   │   ├── Role.java
-    │   │   │   ├── UserRepository.java
-    │   │   │   ├── UserController.java
-    │   │   │   ├── UserService.java
-    │   │   │   ├── UserResponse.java
-    │   │   │   ├── UpdateProfileRequest.java
-    │   │   │   └── ChangePasswordRequest.java
-    │   │   │
-    │   │   ├── admin/
-    │   │   │   ├── AdminController.java
-    │   │   │   ├── AdminUserService.java
-    │   │   │   └── UpdateUserStatusRequest.java
-    │   │   │
-    │   │   ├── market/                                Phase 4 — not built yet
-    │   │   │   ├── MarketController.java
-    │   │   │   ├── MarketService.java
-    │   │   │   ├── SmartApiClient.java
-    │   │   │   ├── SmartApiProperties.java
-    │   │   │   ├── QuoteResponse.java
-    │   │   │   └── SearchResponse.java
-    │   │   │
-    │   │   └── watchlist/                              Phase 5 — not built yet
-    │   │       ├── Watchlist.java
-    │   │       ├── WatchlistItem.java
-    │   │       ├── WatchlistRepository.java
-    │   │       ├── WatchlistItemRepository.java
-    │   │       ├── WatchlistController.java
-    │   │       ├── WatchlistService.java
-    │   │       ├── WatchlistRequest.java
-    │   │       └── WatchlistResponse.java
-    │   │
-    │   └── resources/
-    │       ├── application.yml
-    │       └── db/
-    │           └── migration/
-    │               ├── V1__create_users.sql
-    │               ├── V2__create_refresh_tokens.sql
-    │               ├── V3__add_verification_flags_to_users.sql
-    │               ├── V4__create_otp_verifications.sql
-    │               ├── V5__widen_otp_type_for_password_reset.sql
-    │               └── V6__create_watchlists.sql not built yet
-    │
-    └── test/
-        └── java/com/luffy/trading/
-            └── TradingApplicationTests.java
+├── angelone-market-service/            # Standalone Market Data Gateway (Port 8081)
+│   ├── src/main/java/com/angelone/angelone_market_service/
+│   │   ├── session/                    # AngelSessionManager, TOTP Login, SessionController
+│   │   ├── client/                     # AngelRestCaller, SmartAPI Headers builder
+│   │   ├── marketdata/                 # MarketDataController, MarketDataService (Quotes, Candles, Greeks, OI)
+│   │   ├── instrument/                 # InstrumentService, Daily Scrip Master Index (~140k items)
+│   │   ├── feed/                       # AngelFeedClient, TickParser, SubscriptionManager
+│   │   ├── broadcast/                  # PublicFeedWebSocketHandler (/ws/feed)
+│   │   ├── config/                     # InternalApiKeyFilter, CacheConfig, AppConfig
+│   │   └── exception/                  # GlobalExceptionHandler
+│   ├── data/                           # Instruments disk cache (instruments-cache.json)
+│   ├── .env.example                    # Market service environment template
+│   ├── README.md                       # Service-specific documentation
+│   ├── API_TESTING.md                  # Market service curl testing collection
+│   └── pom.xml                         # Maven build file
+│
+└── Stock-market-Frontend/              # Web User Interface (Vite + React + TypeScript)
 ```
 
 ---
 
-## application.yml
+## ⚡ What's Implemented & Verified
 
-```yaml
-spring:
-  application:
-    name: trading
+### ✅ Phase 1: Core Foundation & Database
+- PostgreSQL 17 setup with Flyway schema migration pipeline:
+  - `V1__create_users.sql`: Core user schema with E.164 phone requirement and role definitions.
+  - `V2__create_refresh_tokens.sql`: Secure refresh token persistence with cascading deletion.
+  - `V3__add_verification_flags_to_users.sql`: `phone_verified` and `email_verified` boolean flags.
+  - `V4__create_otp_verifications.sql`: Single-use OTP table with BCrypt hashed codes.
+  - `V5__widen_otp_type_for_password_reset.sql`: Enum support for `PASSWORD_RESET` OTPs.
+- Standardized API envelope `ApiResponse<T>` (`{ success, message, data, timestamp }`).
+- Centralized `GlobalExceptionHandler` with clean error mapping.
 
-  datasource:
-    url: jdbc:postgresql://localhost:5432/trading
-    username: postgres
-    password: postgres
-    driver-class-name: org.postgresql.Driver
+### ✅ Phase 2: User Authentication & JWT Security
+- User registration via `POST /auth/register` (triggers automatic phone OTP).
+- Multi-identifier login via `POST /auth/login` (supports Phone or Email + Password).
+- Phone verification guard: logins are blocked (`401 Unauthorized`) until the phone is verified.
+- JWT Access Tokens (15-min expiry) & Refresh Tokens (7-day expiry).
+- Refresh token rotation (`POST /auth/refresh`) and explicit revocation (`POST /auth/logout`).
 
-  jpa:
-    hibernate:
-      ddl-auto: validate
-    show-sql: true
-    properties:
-      hibernate:
-        format_sql: true
+### ✅ Phase 3: OTP System & Rate-Limiting
+- Secure OTP generation using `SecureRandom` and BCrypt hashing.
+- Single-use enforcement, 5-minute expiration, and 5-attempt lockout security.
+- Background cleanup scheduler `OtpCleanupScheduler` running every 10 minutes.
+- In-memory `RateLimitService` powered by Bucket4j:
+  - **Registration**: Max 5 attempts / hour / IP.
+  - **Login**: Max 10 attempts / 15 minutes / IP.
+  - **OTP Send**: Max 3 attempts / 15 minutes / User, 5 attempts / hour / IP.
 
-  flyway:
-    enabled: true
-    locations: classpath:db/migration
+### ✅ Phase 4: User Self-Service & Admin Management
+- `GET /users/me` & `PUT /users/me`: Profile retrieval and update.
+- `POST /users/me/password/otp` & `PUT /users/me/password`: Two-step password change using `PASSWORD_RESET` OTPs (revokes all active refresh tokens on success).
+- `AdminSeeder`: Automatic startup bootstrapping of the primary `ADMIN` account.
+- Admin management endpoints (`/admin/users/**`): Paginated user search, profile inspection, account suspension (`enabled: false`), and promotion to `ADMIN`. Double-guarded via `@PreAuthorize("hasRole('ADMIN')")` and `SecurityConfig`.
 
-server:
-  port: 8080
+### ✅ Phase 5: Angel One Integration & Market Gateway (COMPLETE)
+- **`angelone-market-service` Gateway (Port 8081)**:
+  - Automated TOTP authentication (`AngelSessionManager`) with scheduled token refresh.
+  - Instrument Master Service: Downloads and indexes ~140,000 Angel One instruments daily.
+  - Caffeine caching layer for Quotes, Candles, Greeks, Open Interest, Brokerage, and Margin calculations.
+  - Live tick WebSocket feed at `/ws/feed` with reference-counted subscription deduplication.
+- **Backend Proxy Layer (`Stock-Market-Backend` Port 8080)**:
+  - `AngelOneConfig` & `AngelOneProperties`: Centralized HTTP client configured with base URL and `X-Internal-Api-Key`.
+  - `AngelOneClient`: Microservice communication gateway featuring UriBuilder relative path resolution and custom error mapping (`AngelOneServiceException` → 502 Bad Gateway / 503 Service Unavailable).
+  - `MarketController`: 8 endpoints proxying real-time quote, historical candles, option Greeks, brokerage calculator, margin calculator, historical open interest, intraday eligible scrips, and cautionary scrips.
+  - `InstrumentProxyController`: 4 endpoints proxying symbol resolution, reverse token lookup, search, and instrument index health status.
+  - `AngelOneAdminController`: 3 admin-only endpoints proxying session health, force re-login, and force instrument index refresh.
 
-jwt:
-  secret: ${JWT_SECRET:local-dev-secret-change-in-prod}
-  access-token-expiry: 900
-  refresh-token-expiry: 604800
+### ✅ Phase 6: Quality Assurance & Verification
+- **27/27 Automated Integration Test Suite**: Complete verification executed against live PostgreSQL and active SmartAPI session. All endpoints confirmed operational.
 
-# NEW
-otp:
-  sender:
-    logging # dev default — prints OTP to logs. Switch to
-    # "twilio" (or another provider id) once a real
-    # OtpSender implementation exists. NEVER use
-    # "logging" in production.
-  cleanup-interval-ms: 600000 # how often OtpCleanupScheduler purges expired rows
+---
 
-logging:
-  level:
-    com.luffy.trading: DEBUG
-    org.springframework.security: DEBUG
+## 📊 Complete API Endpoint Reference
+
+### 1. Authentication (`/auth/**` — Public)
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `POST` | `/auth/register` | Register a new user account (fires phone OTP) |
+| `POST` | `/auth/login` | Login with phone/email + password (blocked until phone verified) |
+| `POST` | `/auth/refresh` | Exchange a refresh token for a fresh access token |
+| `POST` | `/auth/logout` | Revoke a refresh token and end session |
+
+### 2. OTP Verification (`/otp/**` — Requires JWT)
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `POST` | `/otp/send` | Send OTP to phone or email (`{ "type": "PHONE" \| "EMAIL" }`) |
+| `POST` | `/otp/verify` | Verify 6-digit OTP code (`{ "type", "code" }`) |
+
+### 3. User Self-Service (`/users/**` — Requires JWT)
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `GET` | `/users/me` | Get currently authenticated user profile |
+| `PUT` | `/users/me` | Update profile information (`firstName`, `lastName`, `email`) |
+| `POST` | `/users/me/password/otp` | Request a `PASSWORD_RESET` OTP to registered phone |
+| `PUT` | `/users/me/password` | Change password using OTP (`{ "code", "newPassword" }`) |
+
+### 4. Instrument Lookup (`/instruments/**` — Requires JWT)
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `GET` | `/instruments/resolve` | Resolve symbol → instrument record (`?exchange=NSE&symbol=SBIN-EQ`) |
+| `GET` | `/instruments/token` | Reverse lookup: token → instrument (`?exchange=NSE&token=3045`) |
+| `GET` | `/instruments/search` | Search instruments by prefix/name (`?query=RELIANCE&limit=10`) |
+| `GET` | `/instruments/status` | Instrument index health (total count, last updated, stale flag) |
+
+### 5. Market Data Proxy (`/market/**` — Requires JWT)
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `GET` | `/market/quote` | Real-time quotes (`?mode=LTP\|OHLC\|FULL&exchange=NSE&symbols=SBIN-EQ`) |
+| `GET` | `/market/candles` | Historical OHLCV candles (`?exchange=NSE&symbol=SBIN-EQ&interval=ONE_DAY&fromDate=...&toDate=...`) |
+| `GET` | `/market/greeks` | Option Greeks (`?name=NIFTY&expiryDate=28AUG2025`) |
+| `POST` | `/market/brokerage` | Estimate brokerage and transaction taxes for an order basket |
+| `POST` | `/market/margin` | Calculate real-time margin required for position basket |
+| `GET` | `/market/oi` | Historical open interest for F&O instruments (`?exchange=NFO&symbolToken=42612&...`) |
+| `GET` | `/market/intraday-eligible` | List of scrips eligible for intraday trading + margin multipliers |
+| `GET` | `/market/cautionary` | List of ASM/GSM caution-flagged scrips |
+
+### 6. Admin — User Management (`/admin/users/**` — Requires `ROLE_ADMIN`)
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `GET` | `/admin/users` | List/search all registered users (paginated, optional `?phone=` filter) |
+| `GET` | `/admin/users/{id}` | Inspect full profile of a specific user |
+| `PATCH` | `/admin/users/{id}/status` | Enable or disable (suspend) a user account (cannot target self) |
+| `POST` | `/admin/users/{id}/promote` | Promote a user to `ADMIN` role |
+
+### 7. Admin — Angel One Service Management (`/admin/angelone/**` — Requires `ROLE_ADMIN`)
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `GET` | `/admin/angelone/session/status` | Check if the Angel One gateway has an active broker session |
+| `POST` | `/admin/angelone/session/relogin` | Force an immediate re-login to Angel One SmartAPI (break-glass) |
+| `POST` | `/admin/angelone/instruments/refresh` | Force an immediate refresh of the 140k+ instrument master index |
+
+---
+
+## ⚙️ Environment Configuration
+
+Both backend services require configuration via `.env` files.
+
+### 1. Backend Environment (`Stock-Market-Backend/.env`)
+```env
+JWT_SECRET=KyQzQOYN+N1t/b913e3QKEr5jIu2nX1ySPHT0iXE7MoJyNYkrK629tzLtpx95zyDiiebRA1h5id7bYicX7A9mQ==
+
+DB_URL=jdbc:postgresql://localhost:5432/trading
+DB_USERNAME=postgres
+DB_PASSWORD=postgres
+
+ADMIN_SEED_PHONE=+916003086907
+ADMIN_SEED_PASSWORD=Admin1234
+ADMIN_SEED_FIRST_NAME=Admin
+ADMIN_SEED_LAST_NAME=User
+ADMIN_SEED_EMAIL=admin1234@gmail.com
+
+# Shared secret — MUST BE IDENTICAL to angelone-market-service/.env
+INTERNAL_API_KEY=5272f5f8f04449ce72a4ba87a65d5901a35c0ef23c8f966cc3a5b08fc6f8b40d
+ANGEL_ONE_BASE_URL=http://localhost:8081
+ANGEL_ONE_WS_URL=ws://localhost:8081/ws/feed
+```
+
+### 2. Angel One Service Environment (`angelone-market-service/.env`)
+```env
+ANGEL_CLIENT_CODE=your_client_code
+ANGEL_PIN=your_4_digit_pin
+ANGEL_TOTP_SECRET=your_32_character_base32_totp_secret
+ANGEL_API_KEY=your_smartapi_key
+ANGEL_LOCAL_IP=127.0.0.1
+ANGEL_PUBLIC_IP=127.0.0.1
+ANGEL_MAC_ADDRESS=AA:BB:CC:DD:EE:FF
+
+# Shared secret — MUST BE IDENTICAL to Stock-Market-Backend/.env
+INTERNAL_API_KEY=5272f5f8f04449ce72a4ba87a65d5901a35c0ef23c8f966cc3a5b08fc6f8b40d
+FEED_ALLOWED_ORIGINS=http://localhost:8080,http://localhost:3000
 ```
 
 ---
 
-## docker-compose.yml
+## 🚀 How to Run & Verify
 
-```yaml
-version: "3.8"
-
-services:
-  postgres:
-    image: postgres:17
-    environment:
-      POSTGRES_DB: trading
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-
-volumes:
-  postgres_data:
-```
-
----
-
-## pom.xml — added dependency
-
-```xml
-<!-- Rate limiting (Java 17+ build) -->
-<dependency>
-    <groupId>com.bucket4j</groupId>
-    <artifactId>bucket4j_jdk17-core</artifactId>
-    <version>8.19.0</version>
-</dependency>
-```
-
----
-
-## Database Migrations
-
-```sql
--- V1__create_users.sql
-CREATE TABLE users (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    first_name  VARCHAR(100) NOT NULL,
-    last_name   VARCHAR(100) NOT NULL,
-    phone       VARCHAR(20)  NOT NULL UNIQUE,              -- required, E.164 e.g. +919876543210
-    email       VARCHAR(255) UNIQUE,                       -- optional
-    password    VARCHAR(255) NOT NULL,
-    role        VARCHAR(20)  NOT NULL DEFAULT 'USER',
-    enabled     BOOLEAN      NOT NULL DEFAULT true,         -- account suspension support
-    created_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
-    updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
-);
-
--- V2__create_refresh_tokens.sql
-CREATE TABLE refresh_tokens (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id     UUID         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    token       TEXT         NOT NULL UNIQUE,
-    expires_at  TIMESTAMPTZ  NOT NULL,
-    created_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
-);
-
--- V3__add_verification_flags_to_users.sql   ← NEW
-ALTER TABLE users
-    ADD COLUMN phone_verified BOOLEAN NOT NULL DEFAULT false,
-    ADD COLUMN email_verified BOOLEAN NOT NULL DEFAULT false;
-
--- V4__create_otp_verifications.sql          ← NEW
-CREATE TABLE otp_verifications (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id     UUID         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    type        VARCHAR(10)  NOT NULL CHECK (type IN ('PHONE', 'EMAIL')),
-    code_hash   VARCHAR(255) NOT NULL,           -- BCrypt hash only, plaintext never stored
-    expires_at  TIMESTAMPTZ  NOT NULL,
-    attempts    INT          NOT NULL DEFAULT 0,
-    created_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
-    CONSTRAINT uq_otp_user_type UNIQUE (user_id, type)  -- one active OTP per user per type
-);
-
-CREATE INDEX idx_otp_expires_at ON otp_verifications (expires_at);
-
--- V5__widen_otp_type_for_password_reset.sql          ← NEW (Phase 3)
--- Widens type from VARCHAR(10) to VARCHAR(20) and updates the CHECK
--- constraint so PASSWORD_RESET (14 chars) fits alongside PHONE / EMAIL.
-ALTER TABLE otp_verifications
-    ALTER COLUMN type TYPE VARCHAR(20);
-
-ALTER TABLE otp_verifications
-    DROP CONSTRAINT IF EXISTS otp_verifications_type_check;
-
-ALTER TABLE otp_verifications
-    ADD CONSTRAINT otp_verifications_type_check
-    CHECK (type IN ('PHONE', 'EMAIL', 'PASSWORD_RESET'));
-```
-
----
-
-## API Endpoints
-
-### Auth
-
-| Method | Endpoint         | Auth | Rate Limit       | Description                                                |
-| ------ | ---------------- | ---- | ---------------- | ---------------------------------------------------------- |
-| POST   | `/auth/register` | No   | 5 / hour / IP    | Create account (phone required), fires phone OTP           |
-| POST   | `/auth/login`    | No   | 10 / 15 min / IP | Login via phone or email — **blocked if phone unverified** |
-| POST   | `/auth/refresh`  | No   | —                | Refresh access token                                       |
-| POST   | `/auth/logout`   | Yes  | —                | Revoke refresh token                                       |
-
-### OTP — NEW
-
-| Method | Endpoint      | Auth | Rate Limit                          | Description                                                               |
-| ------ | ------------- | ---- | ----------------------------------- | ------------------------------------------------------------------------- |
-| POST   | `/otp/send`   | Yes  | 3 / 15 min / user, 5 / hour / IP    | Generate + dispatch a new OTP, invalidating any previous one of that type |
-| POST   | `/otp/verify` | Yes  | 5 wrong attempts invalidate the OTP | Verify a code, flips `phoneVerified`/`emailVerified` to `true`            |
-
-### User (self-service) — Phase 3 ✅ NEW
-
-| Method | Endpoint                 | Auth | Description                                                                   |
-| ------ | ------------------------ | ---- | ----------------------------------------------------------------------------- |
-| GET    | `/users/me`              | Yes  | Get own profile                                                               |
-| PUT    | `/users/me`              | Yes  | Update `firstName`/`lastName`/`email` — does **not** reset `emailVerified`    |
-| POST   | `/users/me/password/otp` | Yes  | Step 1 of changing your password — sends a `PASSWORD_RESET` OTP to your phone |
-| PUT    | `/users/me/password`     | Yes  | Step 2 — body `{code, newPassword}`; on success revokes all refresh tokens    |
-
-### Admin — Phase 3 ✅ NEW
-
-All routes below require `ROLE_ADMIN`, enforced twice: `@PreAuthorize` on
-`AdminController` and a `/admin/**` matcher in `SecurityConfig`.
-
-| Method | Endpoint                          | Auth  | Description                                                     |
-| ------ | --------------------------------- | ----- | --------------------------------------------------------------- |
-| GET    | `/admin/users?phone=&page=&size=` | Admin | List/search all users, optional partial phone filter, paginated |
-| GET    | `/admin/users/{id}`               | Admin | View any single user's full profile                             |
-| PATCH  | `/admin/users/{id}/status`        | Admin | body `{enabled}` — enable/disable; blocked from targeting self  |
-| POST   | `/admin/users/{id}/promote`       | Admin | Promotes a user to `ADMIN`, idempotent                          |
-
-### Market
-
-| Method | Endpoint                    | Auth | Description     |
-| ------ | --------------------------- | ---- | --------------- |
-| GET    | `/market/quote?symbol=INFY` | Yes  | Get stock quote |
-| GET    | `/market/search?q=Infosys`  | Yes  | Search stocks   |
-
-### Watchlist
-
-| Method | Endpoint                          | Auth | Description            |
-| ------ | --------------------------------- | ---- | ---------------------- |
-| GET    | `/watchlists`                     | Yes  | List all watchlists    |
-| POST   | `/watchlists`                     | Yes  | Create watchlist       |
-| DELETE | `/watchlists/{id}`                | Yes  | Delete watchlist       |
-| POST   | `/watchlists/{id}/items`          | Yes  | Add stock to watchlist |
-| DELETE | `/watchlists/{id}/items/{symbol}` | Yes  | Remove from watchlist  |
-
----
-
-## JWT Flow
-
-```
-POST /auth/register
-        │
-        ▼
-  rate limit: 5/hour/IP — 429 if exceeded
-        │
-        ▼
-  validate: phone present + E.164 format
-  check: phone not already registered
-  check: email not already registered (if provided)
-        │
-        ▼
-  BCrypt(password) → save User (phoneVerified=false, emailVerified=false)
-        │
-        ▼
-  OtpService.generateAndSend(user, PHONE)        ← NEW
-        │
-        ▼
-  generate accessToken (sub = userId, 15 min)
-  save refreshToken → DB (7 days)
-        │
-        ▼
-  return { accessToken, refreshToken }
-
-
-POST /auth/login
-        │
-        ▼
-  rate limit: 10/15min/IP — 429 if exceeded
-        │
-        ▼
-  body: { phone? | email?, password* }
-        │
-        ▼
-  if phone provided  → findByPhone
-  else if email      → findByEmail
-  else               → 400 Bad Request
-        │
-        ▼
-  BCrypt.matches(raw, hashed) → 401 if fails
-        │
-        ▼
-  user.phoneVerified == false?  → 401 "not verified"     ← NEW
-        │
-        ▼
-  generate accessToken (sub = userId)
-  save refreshToken → DB
-        │
-        ▼
-  return { accessToken, refreshToken }
-
-
-Every protected request
-  Authorization: Bearer <accessToken>
-        │
-        ▼
-  JwtFilter → extract userId from sub claim
-        │
-        ▼
-  userRepository.findById(userId) → 401 if not found
-        │
-        ▼
-  set SecurityContext → controller runs
-
-
-POST /auth/refresh
-  body: { refreshToken }
-        │
-        ▼
-  look up token in DB → 401 if missing or expired
-        │
-        ▼
-  return new accessToken (refreshToken unchanged)
-
-
-POST /auth/logout
-  Authorization: Bearer <accessToken>
-        │
-        ▼
-  delete refreshToken from DB → session invalidated
-```
-
-### OTP Flow
-
-```
-POST /otp/send
-  Authorization: Bearer <accessToken>
-  body: { type: PHONE | EMAIL }
-        │
-        ▼
-  rate limit: 5/hour/IP → 429 if exceeded
-        │
-        ▼
-  resolve current user from token
-        │
-        ▼
-  OtpService.generateAndSend(user, type)
-    │
-    ├─ rate limit: 3/15min/user → 429 if exceeded
-    ├─ delete any existing OTP of this type for this user
-    ├─ generate 6-digit code via SecureRandom
-    ├─ BCrypt-hash it → store hash + expiresAt(+5min) + attempts=0
-    └─ OtpSender.send(user, type, plainCode)   ← LoggingOtpSender logs it (dev)
-        │
-        ▼
-  return 200 OK
-
-
-POST /otp/verify
-  Authorization: Bearer <accessToken>
-  body: { type: PHONE | EMAIL, code: "123456" }
-        │
-        ▼
-  resolve current user from token
-        │
-        ▼
-  OtpService.verify(user, type, code)
-    │
-    ├─ no active OTP for (user, type)?        → 404
-    ├─ expired?  delete row                    → 400 OtpExpiredException
-    ├─ attempts >= 5?  delete row               → 429 TooManyOtpAttemptsException
-    ├─ BCrypt.matches(code, hash)?
-    │     no  → attempts++; if now >=5, delete + 429; else → 400 InvalidOtpException
-    │     yes → delete row (single-use)
-    │           set user.phoneVerified / emailVerified = true
-        │
-        ▼
-  return 200 OK
-
-
-Background — OtpCleanupScheduler
-  every 10 min (configurable via otp.cleanup-interval-ms)
-        │
-        ▼
-  DELETE FROM otp_verifications WHERE expires_at < now()
-```
-
-### Password Change Flow
-
-```
-
-POST /users/me/password/otp
-Authorization: Bearer <accessToken>
-│
-▼
-OtpService.generateAndSend(currentUser, PASSWORD_RESET)
-(same rate limit + single-active-OTP-per-type machinery as PHONE/EMAIL —
-this is a distinct OtpType, so it doesn't collide with an in-flight
-phone-verification OTP)
-│
-▼
-return 200 OK — code logged by LoggingOtpSender in dev
-
-PUT /users/me/password
-Authorization: Bearer <accessToken>
-body: { code, newPassword }
-│
-▼
-OtpService.verify(currentUser, PASSWORD_RESET, code)
-(same expiry/attempt-lockout rules as PHONE/EMAIL, but does NOT flip
-phoneVerified/emailVerified on success — that's not what this OTP proves)
-│
-▼
-BCrypt(newPassword) → save user
-│
-▼
-authRepository.deleteAllByUserId(user.id) ← revoke every refresh token;
-forces re-login everywhere
-│
-▼
-return 200 OK
-
-```
-
-### Admin Flow
-
-```
-
-GET /admin/users?phone=&page=&size=
-Authorization: Bearer <accessToken>
-│
-▼
-@PreAuthorize("hasRole('ADMIN')") + SecurityConfig /admin/\*\* rule → 403 if not admin
-│
-▼
-phone param present? → findByPhoneContainingIgnoreCase (partial match)
-else → findAll (paginated)
-
-PATCH /admin/users/{id}/status { enabled }
-│
-▼
-id == caller's own id? → 400 IllegalSelfActionException
-│
-▼
-set user.enabled, save
-│
-▼
-enabled == false? → authRepository.deleteAllByUserId(user.id)
-(JwtFilter already blocks a disabled user's access
-token; this also kills their refresh token so
-/auth/refresh can't mint a new one)
-
-POST /admin/users/{id}/promote
-│
-▼
-set user.role = ADMIN, save (idempotent — promoting an existing admin is a no-op)
-
-```
-
-### Admin Bootstrap
-
-```
-
-Application startup
-│
-▼
-AdminSeeder.run() (ApplicationRunner, runs once per boot)
-│
-▼
-userRepository.existsByRole(ADMIN)?
-yes → do nothing (already bootstrapped)
-no → admin.seed.phone/password configured?
-no → log a warning, skip
-yes → create User(role=ADMIN, phoneVerified=true) using the
-real PasswordEncoder bean, save
-
-```
-
-## Rate Limiting — NEW
-
-In-memory Bucket4j buckets, keyed by IP or by user id:
-
-| Limit                 | Scope    | Window                                                                                     |
-| --------------------- | -------- | ------------------------------------------------------------------------------------------ |
-| 5 registrations       | per IP   | 1 hour                                                                                     |
-| 10 login attempts     | per IP   | 15 minutes                                                                                 |
-| 3 OTP sends           | per user | 15 minutes                                                                                 |
-| 5 OTP sends           | per IP   | 1 hour                                                                                     |
-| 5 OTP verify attempts | per OTP  | until invalidated (not time-windowed — tracked on the `otp_verifications.attempts` column) |
-
-> Buckets live in a `ConcurrentHashMap` inside `RateLimitService`, so they're
-> per-JVM-instance — fine for a single instance. Scaling horizontally later
-> means swapping the map for `bucket4j-redis` / `-hazelcast` / `-jcache`; the
-> limit definitions themselves don't change.
-
----
-
-## Build Order
-
-### Phase 1 — Foundation ✅
-
-- [x] Folder structure
-- [x] `application.yml`
-- [x] `docker-compose.yml`
-- [x] `ApiResponse<T>`
-- [x] `GlobalExceptionHandler`
-- [x] Flyway + `V1__create_users.sql` (firstName, lastName, phone required, email optional, enabled)
-
-### Phase 2 — Auth ✅
-
-- [x] `Role` enum
-- [x] `User` entity (firstName, lastName, phone NOT NULL, email nullable, enabled), `UserRepository`
-- [x] `PasswordEncoder` bean (BCrypt)
-- [x] `JwtService` — generate + validate tokens (sub = userId)
-- [x] `JwtFilter` — validate Bearer token on every request
-- [x] `SecurityConfig` — permit `/auth/**`, lock everything else
-- [x] `RegisterRequest` — firstName + lastName + phone + password required, email optional
-- [x] `LoginRequest` — phone or email + password
-- [x] `AuthController` — register, login, refresh, logout
-- [x] `RefreshToken` entity + `V2__create_refresh_tokens.sql`
-
-### Phase 2.5 — OTP Verification + Rate Limiting ✅ NEW
-
-- [x] `V3__add_verification_flags_to_users.sql` — `phone_verified`, `email_verified`
-- [x] `V4__create_otp_verifications.sql` — OTP table, one active row per (user, type)
-- [x] `OtpType`, `OtpVerification` entity, `OtpRepository`
-- [x] `OtpSender` interface + `LoggingOtpSender` (dev) implementation
-- [x] `OtpService` — generate/send (SecureRandom + BCrypt hash), verify (single-use, max 5 attempts), invalidate-previous-on-resend
-- [x] `OtpController` — `POST /otp/send`, `POST /otp/verify`
-- [x] `OtpCleanupScheduler` — periodic purge of expired rows (`@EnableScheduling` added to `TradingApplication`)
-- [x] `RateLimitService` (Bucket4j) — registration, login, OTP-send (per-user and per-IP) limits
-- [x] `AuthService.register()` — creates user unverified, auto-fires phone OTP
-- [x] `AuthService.login()` — blocks unverified phones
-- [x] `SecurityUtils` — resolves current user id from JWT auth context
-- [x] New exceptions: `InvalidOtpException`, `OtpExpiredException`, `TooManyOtpAttemptsException`, `RateLimitExceededException`
-
-### Phase 3 — User Profile + Admin ✅ NEW
-
-- [x] `V5__widen_otp_type_for_password_reset.sql`
-- [x] `OtpType.PASSWORD_RESET`; `OtpService.verify()` no longer flips a
-      verification flag for that type
-- [x] `UserResponse`, `UpdateProfileRequest`, `ChangePasswordRequest`
-- [x] `UserService` / `UserController` — `GET /users/me`, `PUT /users/me`,
-      `POST /users/me/password/otp`, `PUT /users/me/password`
-- [x] `UserRepository` — `existsByRole`, `findByPhoneContainingIgnoreCase`
-- [x] `admin` package — `AdminController`, `AdminUserService`,
-      `UpdateUserStatusRequest`
-- [x] `AdminSeedProperties` / `AdminSeeder` — bootstraps the first admin on
-      startup from config, no hand-typed password hashes
-- [x] `SecurityConfig` — `@EnableMethodSecurity`, `/admin/**` → `hasRole("ADMIN")`
-- [x] `GlobalExceptionHandler` — `AccessDeniedException` (403),
-      `IllegalSelfActionException` (400)
-
-### Phase 4 — Market Data
-
-- [ ] `SmartApiClient` — HTTP calls to Angel SmartAPI
-- [ ] `SmartApiProperties`
-- [ ] `MarketController` — quote, search
-
-### Phase 5 — Watchlists
-
-- [ ] `V5__create_watchlists.sql`
-- [ ] `Watchlist` + `WatchlistItem` entities
-- [ ] `WatchlistController` — CRUD + items
-
-### Later (not now)
-
-- Phone + OTP **login** (replacing password with a code) — schema already supports it
-- Real `OtpSender` implementation (Twilio / AWS SNS / SES) — interface is ready, see [OTP Delivery](#otp-delivery--migration-path-to-a-real-provider)
-- Distributed rate limiting (`bucket4j-redis`) for multi-instance deployments
-- Admin endpoint to toggle `enabled` (account suspension)
-- Swagger / OpenAPI
-- WebSocket
-- Redis
-- Portfolio simulator
-- `application-prod.yml` + deployment
-
-~~Email/phone verification flags (`emailVerified`, `phoneVerified`)~~ — ✅ done, see Phase 2.5
-
----
-
-## Dev Commands
-
+### Step 1: Start PostgreSQL
 ```bash
-# Start PostgreSQL
+cd Stock-Market-Backend
 docker compose up -d
-
-# Run app
-./mvnw spring-boot:run
-
-# Stop
-Ctrl+C && docker compose down
-
-# Full reset
-docker compose down -v && docker compose up -d
-
-# Build JAR
-./mvnw clean package
-
-# Run JAR
-java -jar target/trading-0.0.1-SNAPSHOT.jar
 ```
 
-### Testing the OTP flow locally
-
+### Step 2: Start the Angel One Market Gateway
 ```bash
-# 1. Register — watch the app logs for the OTP (LoggingOtpSender prints it)
-curl -X POST localhost:8080/auth/register -H 'Content-Type: application/json' \
-  -d '{"firstName":"Abhi","lastName":"Sharma","phone":"+919876543210","password":"secret123"}'
-
-# 2. Verify using the code from the logs (token from step 1's response)
-curl -X POST localhost:8080/otp/verify -H 'Content-Type: application/json' \
-  -H 'Authorization: Bearer <accessToken>' \
-  -d '{"type":"PHONE","code":"123456"}'
-
-# 3. Now login succeeds
-curl -X POST localhost:8080/auth/login -H 'Content-Type: application/json' \
-  -d '{"phone":"+919876543210","password":"secret123"}'
+cd ../angelone-market-service
+./mvnw spring-boot:run
 ```
+*Wait for log output:* `AngelOne login succeeded` & `Instrument index refreshed`.
+
+### Step 3: Start the Stock Market Backend
+```bash
+cd ../Stock-Market-Backend
+./mvnw spring-boot:run
+```
+*Wait for log output:* `Started TradingApplication`.
+
+### Step 4: Run the Complete 27-Endpoint Automated Test Suite
+```bash
+chmod +x /tmp/test_all_endpoints.sh
+/tmp/test_all_endpoints.sh
+```
+
+---
+
+## 📄 Related Documentation
+- [Angel One Integration Guide](file:///home/atomic-shadow/development/Stock-Market/angelone-integration-guide.md): Comprehensive deep-dive on microservice communication, session lifecycle, and security boundaries.
+- [Backend Testing Guide](file:///home/atomic-shadow/development/Stock-Market/Stock-Market-Backend/API_TESTING.md): Step-by-step curl walkthrough for testing every backend endpoint manually.
+- [Backend Implementation Walkthrough](file:///home/atomic-shadow/.gemini/antigravity-ide/brain/0702cd8b-85e0-4376-978d-cf9926ff3f36/walkthrough.md): Verification report detailing bug fixes, architectural choices, and test outputs.

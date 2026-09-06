@@ -33,8 +33,11 @@ public class SecurityConfig {
                 .sessionManagement(session ->
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/auth/**").permitAll() // public: register, login, refresh
-                        .anyRequest().authenticated()            // everything else requires JWT
+                        .requestMatchers("/auth/**").permitAll()          // public: register, login, refresh
+                        .requestMatchers("/market/**").authenticated()    // any logged-in user
+                        .requestMatchers("/instruments/**").authenticated()// any logged-in user
+                        .requestMatchers("/admin/**").hasRole("ADMIN")    // admin only (covers /admin/users/** and /admin/angelone/**)
+                        .anyRequest().authenticated()                     // everything else requires JWT
                 )
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
                 .build();

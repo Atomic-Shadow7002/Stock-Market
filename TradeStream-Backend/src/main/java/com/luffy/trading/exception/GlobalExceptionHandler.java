@@ -11,10 +11,26 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import com.luffy.trading.angelone.AngelOneServiceException;
 import com.luffy.trading.response.ApiResponse;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    /**
+     * Angel One service integration failures — maps to 502 (upstream API error) or
+     * 503 (service unreachable / connection refused). Returns a clear message so
+     * callers know this is an external dependency issue, not a bug in this service.
+     */
+    @ExceptionHandler(AngelOneServiceException.class)
+    public ResponseEntity<ApiResponse<Void>> handleAngelOneService(AngelOneServiceException ex) {
+        int status = ex.getUpstreamStatus();
+        HttpStatus httpStatus = (status == 503 || status == 0)
+                ? HttpStatus.SERVICE_UNAVAILABLE
+                : HttpStatus.BAD_GATEWAY;
+        return ResponseEntity.status(httpStatus)
+                .body(ApiResponse.error("Market data service error: " + ex.getMessage()));
+    }
 
     @ExceptionHandler(ResourceNotFoundException.class)
     public ResponseEntity<ApiResponse<Void>> handleNotFound(ResourceNotFoundException ex) {
